@@ -1,0 +1,24 @@
+export type AdminSkill = {
+  id: number;
+  category_id: number;
+  name: string;
+  name_nepali?: string | null;
+  slug?: string;
+  description?: string | null;
+  price_model: "fixed" | "hourly" | "variable";
+  base_price?: number | string | null;
+  min_price?: number | string | null;
+  max_price?: number | string | null;
+  minimum_hours?: number | null;
+  estimated_duration_min?: number | null;
+  estimated_duration_max?: number | null;
+  skill_level?: string | null;
+  requires_verification?: boolean;
+  icon?: string | null;
+  is_active: boolean;
+  popular?: boolean;
+  display_order?: number;
+  created_at?: string;
+  updated_at?: string;
+  category_name?: string;
+};
