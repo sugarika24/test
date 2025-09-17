@@ -16,6 +16,7 @@ import reviewRoutes from "./src/routes/review.Routes.js";
 import notificationRoutes from "./src/routes/notification.Routes.js";
 import chatRoutes from "./src/routes/chat.Routes.js";
 import adminSkillRoutes from "./src/routes/adminSkill.Routes.js";
+import paymentRoutes from "./src/routes/payment.Routes.js";
 
 dotenv.config();
 
@@ -44,6 +45,7 @@ app.use("/api/reviews", reviewRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/admin", adminSkillRoutes);
+app.use("/api/payments", paymentRoutes);
 
 // Test route
 app.get("/", (req, res) => {
