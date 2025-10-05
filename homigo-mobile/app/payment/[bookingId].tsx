@@ -12,6 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
 import { getBookingById, payBooking } from "../../services/bookingService";
+import { initiateEsewaPayment } from "../../services/paymentService";
 
 export default function PaymentScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
@@ -20,7 +21,7 @@ export default function PaymentScreen() {
   const [booking, setBooking] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
-  const [selectedMethod, setSelectedMethod] = useState<"COD" | "ONLINE" | null>(
+  const [selectedMethod, setSelectedMethod] = useState<"COD" | "ESEWA" | null>(
     null,
   );
 
@@ -85,32 +86,49 @@ export default function PaymentScreen() {
     try {
       setPaying(true);
 
-      const res = await payBooking(
-        bookingId as string,
-        selectedMethod,
-        token as string,
-      );
+      if (selectedMethod === "COD") {
+        const res = await payBooking(bookingId as string, "COD", token as string);
 
-      console.log("payBooking response:", res);
-
-      if (res?.ok) {
-        Alert.alert(
-          "Success",
-          selectedMethod === "ONLINE"
-            ? "Payment completed successfully"
-            : "Cash on Delivery selected successfully",
-          [
+        if (res?.ok) {
+          Alert.alert("Success", "Cash on Delivery selected", [
             {
               text: "OK",
               onPress: () => router.replace("/(tabs)/bookings"),
             },
-          ],
-        );
-      } else {
-        Alert.alert("Error", res?.message || "Payment update failed");
+          ]);
+        } else {
+          Alert.alert("Error", res?.message || "Failed to select COD");
+        }
+
+        return;
       }
+
+      const initiateRes = await initiateEsewaPayment(
+        bookingId as string,
+        token as string,
+      );
+
+      const formUrl = initiateRes?.data?.form_url;
+      const fields = initiateRes?.data?.fields;
+
+      if (!initiateRes?.ok || !formUrl || !fields) {
+        Alert.alert(
+          "Error",
+          initiateRes?.message || "Failed to initiate eSewa",
+        );
+        return;
+      }
+
+      router.push({
+        pathname: "/payment/esewa",
+        params: {
+          bookingId: String(bookingId),
+          formUrl,
+          fields: JSON.stringify(fields),
+        },
+      });
     } catch (error: any) {
-      console.log("payBooking error:", error);
+      console.log("handleConfirmPayment error:", error);
       Alert.alert("Error", error?.message || "Something went wrong");
     } finally {
       setPaying(false);
@@ -277,11 +295,11 @@ export default function PaymentScreen() {
 
             <TouchableOpacity
               activeOpacity={0.8}
-              onPress={() => !isAlreadyPaid && setSelectedMethod("ONLINE")}
+              onPress={() => !isAlreadyPaid && setSelectedMethod("ESEWA")}
               disabled={isAlreadyPaid}
               style={{ opacity: isAlreadyPaid ? 0.6 : 1 }}
               className={`rounded-2xl border p-4 mb-3 ${
-                selectedMethod === "ONLINE"
+                selectedMethod === "ESEWA"
                   ? "border-[#FE4D01] bg-[#FEF3E8]"
                   : "border-gray-200 bg-white"
               }`}
@@ -292,13 +310,13 @@ export default function PaymentScreen() {
                 </View>
                 <View className="ml-3 flex-1">
                   <Text className="text-gray-800 font-semibold">
-                    Online Payment
+                    eSewa Payment
                   </Text>
                   <Text className="text-gray-500 text-sm mt-1">
-                    Pay now and mark booking as paid
+                    Pay securely via eSewa app or web
                   </Text>
                 </View>
-                {selectedMethod === "ONLINE" && (
+                {selectedMethod === "ESEWA" && (
                   <Ionicons name="checkmark-circle" size={24} color="#FE4D01" />
                 )}
               </View>
@@ -379,7 +397,7 @@ export default function PaymentScreen() {
                 color="#9ca3af"
               />
               <Text className="text-gray-400 text-xs ml-1 text-center">
-                Online payment marks booking as paid. COD keeps payment pending.
+                eSewa payment opens a secure checkout and verifies on success.
               </Text>
             </View>
           </View>
