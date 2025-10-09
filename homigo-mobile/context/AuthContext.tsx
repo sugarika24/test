@@ -7,6 +7,8 @@ import {
   forgotPassword as forgotPasswordService,
   resetPassword as resetPasswordService,
   logoutUser,
+  sendRegisterEmailOtp as sendRegisterEmailOtpService,
+  verifyRegisterEmailOtp as verifyRegisterEmailOtpService,
 } from "../services/authService";
 import { LoginPayload, RegisterPayload, User } from "../types/auth";
 
@@ -16,7 +18,7 @@ type AuthContextType = {
   loading: boolean;
   isReady: boolean;
   signIn: (payload: LoginPayload) => Promise<void>;
-  signUp: (payload: RegisterPayload) => Promise<void>;
+  signUp: (payload: RegisterPayload) => Promise<any>;
   signOut: () => Promise<void>;
   forgotPassword: (email: string) => Promise<any>;
   resetPassword: (payload: {
@@ -24,6 +26,14 @@ type AuthContextType = {
     otp_code: string;
     new_password: string;
     confirm_password: string;
+  }) => Promise<any>;
+  sendRegisterEmailOtp: (payload: {
+    email: string;
+    full_name?: string;
+  }) => Promise<any>;
+  verifyRegisterEmailOtp: (payload: {
+    email: string;
+    otp_code: string;
   }) => Promise<any>;
 };
 
@@ -77,14 +87,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function signUp(payload: RegisterPayload) {
     setLoading(true);
     try {
-      const data = await registerUser(payload);
-      await saveAuth(data.token, data.user);
-      setToken(data.token);
-      setUser(data.user);
-      router.replace(getRouteByRole(data.user.role) as any);
+      return await registerUser(payload);
     } finally {
       setLoading(false);
     }
+  }
+
+  async function sendRegisterEmailOtp(payload: {
+    email: string;
+    full_name?: string;
+  }) {
+    return sendRegisterEmailOtpService(payload);
+  }
+
+  async function verifyRegisterEmailOtp(payload: {
+    email: string;
+    otp_code: string;
+  }) {
+    return verifyRegisterEmailOtpService(payload);
   }
 
   async function signOut() {
@@ -127,6 +147,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signOut,
         forgotPassword,
         resetPassword,
+        sendRegisterEmailOtp,
+        verifyRegisterEmailOtp,
       }}
     >
       {children}
