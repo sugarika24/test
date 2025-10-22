@@ -1,6 +1,6 @@
 import { getToken } from "../utils/storage";
 
-export const API_BASE_URL = "http://10.23.0.240:5000/api";
+export const API_BASE_URL = "http://192.168.16.194:5000/api";
 
 export async function apiRequest(
   endpoint: string,
@@ -75,6 +75,14 @@ export async function apiPut(endpoint: string, body?: any) {
     },
     token || undefined
   );
+}
+
+//Patch
+export async function apiPatch(endpoint: string, data: any = {}) {
+  return await apiRequest(endpoint, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
 }
 
 //  DELETE
