@@ -14,6 +14,26 @@ export async function loginUser(payload: LoginPayload) {
   });
 }
 
+export async function sendRegisterEmailOtp(payload: {
+  email: string;
+  full_name?: string;
+}) {
+  return apiRequest("/auth/send-register-email-otp", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function verifyRegisterEmailOtp(payload: {
+  email: string;
+  otp_code: string;
+}) {
+  return apiRequest("/auth/verify-register-email-otp", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function registerUser(payload: RegisterPayload) {
   if (payload.role === "HELPER") {
     const formData = new FormData();
@@ -22,7 +42,7 @@ export async function registerUser(payload: RegisterPayload) {
     formData.append("email", payload.email);
     formData.append("password", payload.password);
     formData.append("confirm_password", payload.confirm_password);
-    formData.append("phone_number", payload.phone_number || "");
+    formData.append("phone_number", payload.phone_number);
     formData.append("role", payload.role);
     formData.append("id_document_type", payload.id_document_type || "");
     formData.append("id_document_number", payload.id_document_number || "");
@@ -48,7 +68,7 @@ export async function registerUser(payload: RegisterPayload) {
       email: payload.email,
       password: payload.password,
       confirm_password: payload.confirm_password,
-      phone_number: payload.phone_number || "",
+      phone_number: payload.phone_number,
       role: payload.role,
     }),
   });
