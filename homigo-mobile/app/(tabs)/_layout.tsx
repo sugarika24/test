@@ -1,16 +1,13 @@
-import { Tabs, router, useSegments } from "expo-router";
+import { Tabs, router } from "expo-router";
 import { useEffect } from "react";
-import { ActivityIndicator, View, Platform, SafeAreaView } from "react-native";
+import { ActivityIndicator, View, Platform } from "react-native";
 import { useAuth } from "../../context/AuthContext";
-import {
-  Ionicons,
-  MaterialCommunityIcons,
-  FontAwesome,
-} from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 
 export default function UserTabsLayout() {
   const { user, isReady } = useAuth();
-  const segments = useSegments();
+
+  const role = String(user?.role || "").toUpperCase();
 
   useEffect(() => {
     if (!isReady) return;
@@ -20,14 +17,16 @@ export default function UserTabsLayout() {
       return;
     }
 
-    if (user.role !== "USER") {
-      if (user.role === "HELPER") {
-        router.replace("/(helper)/helper-home");
-      } else if (user.role === "ADMIN") {
-        router.replace("/(admin)/dashboard");
-      }
+    if (role === "HELPER") {
+      router.replace("/(helper)/helper-home");
+      return;
     }
-  }, [user, isReady, segments]);
+
+    if (role === "ADMIN") {
+      router.replace("/(admin)/dashboard");
+      return;
+    }
+  }, [user, isReady, role]);
 
   if (!isReady) {
     return (
@@ -37,12 +36,12 @@ export default function UserTabsLayout() {
     );
   }
 
-  if (!user || user.role !== "USER") {
-    return (
-      <View className="flex-1 items-center justify-center bg-white">
-        <ActivityIndicator size="large" color="#FE8B4C" />
-      </View>
-    );
+  if (!user) {
+    return null;
+  }
+
+  if (role !== "USER") {
+    return null;
   }
 
   return (
@@ -77,7 +76,7 @@ export default function UserTabsLayout() {
         name="index"
         options={{
           title: "Home",
-          tabBarIcon: ({ color, size, focused }) => (
+          tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? "home" : "home-outline"}
               size={22}
@@ -91,7 +90,7 @@ export default function UserTabsLayout() {
         name="bookings"
         options={{
           title: "Bookings",
-          tabBarIcon: ({ color, size, focused }) => (
+          tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? "calendar" : "calendar-outline"}
               size={22}
@@ -105,7 +104,7 @@ export default function UserTabsLayout() {
         name="profile"
         options={{
           title: "Profile",
-          tabBarIcon: ({ color, size, focused }) => (
+          tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? "person" : "person-outline"}
               size={22}
@@ -115,7 +114,6 @@ export default function UserTabsLayout() {
         }}
       />
 
-      {/* Hidden Screens */}
       <Tabs.Screen name="category/[id]" options={{ href: null }} />
       <Tabs.Screen name="subcategory/[id]" options={{ href: null }} />
       <Tabs.Screen name="helper/[id]" options={{ href: null }} />

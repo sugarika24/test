@@ -34,7 +34,7 @@ export interface Booking {
   commission_amount?: number | string | null;
   helper_earning?: number | string | null;
 
-  payment_status?: "PENDING" | "PAID" | "FAILED";
+  payment_status?: "UNPAID" | "INITIATED" | "PAID" | "FAILED" | "REFUNDED" | null;
   payment_method?: "COD" | "ONLINE" | null;
   transaction_id?: string | null;
   paid_at?: string | null;

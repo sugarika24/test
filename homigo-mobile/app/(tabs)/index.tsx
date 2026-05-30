@@ -17,6 +17,8 @@ import { Category, Subcategory } from "../../types/category";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import ChatHeaderButton from "@/components/ChatHeaderButton";
+import { getUnreadNotificationCount } from "../../services/notificationService";
+import { getSocket } from "../../services/socketService";
 
 export default function UserHomeScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -24,26 +26,84 @@ export default function UserHomeScreen() {
     Subcategory[]
   >([]);
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+
   useEffect(() => {
+    console.log("Home screen mounted");
+
+    setLoading(false);
+
     fetchHomeData();
   }, []);
+
+  useEffect(() => {
+    let cleanupSocket: any = null;
+
+    const attachSocketListener = () => {
+      const socket = getSocket();
+
+      if (!socket) return;
+
+      const handleNotification = async () => {
+        console.log("Home badge refresh triggered");
+        await fetchUnreadCount();
+      };
+
+      socket.on("notification", handleNotification);
+
+      cleanupSocket = () => {
+        socket.off("notification", handleNotification);
+      };
+    };
+
+    attachSocketListener();
+
+    const timer = setTimeout(() => {
+      attachSocketListener();
+    }, 1000);
+
+    return () => {
+      clearTimeout(timer);
+      if (cleanupSocket) cleanupSocket();
+    };
+  }, []);
+
+  async function fetchUnreadCount() {
+    try {
+      const count = await getUnreadNotificationCount();
+      setUnreadNotificationCount(count);
+    } catch (error) {
+      console.log("Failed to fetch unread notifications:", error);
+    }
+  }
 
   async function fetchHomeData() {
     try {
       setLoading(true);
 
-      const [categoryRes, popularRes] = await Promise.all([
+      const [categoryRes, popularRes] = await Promise.allSettled([
         getAllCategories(),
         getPopularSubcategories(),
       ]);
 
-      setCategories(categoryRes.categories || []);
-      setPopularSubcategories(popularRes.subcategories || []);
+      if (categoryRes.status === "fulfilled") {
+        setCategories(categoryRes.value.categories || []);
+      } else {
+        console.log("Category load error:", categoryRes.reason);
+        setCategories([]);
+      }
+
+      if (popularRes.status === "fulfilled") {
+        setPopularSubcategories(popularRes.value.subcategories || []);
+      } else {
+        console.log("Popular services load error:", popularRes.reason);
+        setPopularSubcategories([]);
+      }
     } catch (error: any) {
-      Alert.alert("Error", error.message || "Failed to load home data");
+      console.log("Home load error:", error);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -53,6 +113,7 @@ export default function UserHomeScreen() {
   const onRefresh = () => {
     setRefreshing(true);
     fetchHomeData();
+    fetchUnreadCount();
   };
 
   function handleSearch() {
@@ -61,14 +122,6 @@ export default function UserHomeScreen() {
       pathname: "/(tabs)/subcategory/[id]",
       params: { id: "search", q: search.trim() },
     });
-  }
-
-  if (loading) {
-    return (
-      <View className="flex-1 items-center justify-center bg-gray-50">
-        <ActivityIndicator size="large" color="#FE8B4C" />
-      </View>
-    );
   }
 
   return (
@@ -86,7 +139,6 @@ export default function UserHomeScreen() {
         }
       >
         <View className="px-5 pt-4 pb-2">
-          {/* Header */}
           <View className="flex-row justify-between items-center mb-5">
             <View>
               <Text className="text-3xl font-bold text-[#FE8B4C]">Homigo</Text>
@@ -96,9 +148,10 @@ export default function UserHomeScreen() {
             </View>
 
             <View className="flex-row items-center gap-3">
-              <ChatHeaderButton />
+              {/* <ChatHeaderButton /> */}
+
               <TouchableOpacity
-                className="bg-[#FEF3E8] p-3 rounded-full"
+                className="bg-[#FEF3E8] p-3 rounded-full relative"
                 onPress={() => router.push("/notifications")}
               >
                 <Ionicons
@@ -106,6 +159,16 @@ export default function UserHomeScreen() {
                   size={22}
                   color="#FE8B4C"
                 />
+
+                {unreadNotificationCount > 0 && (
+                  <View className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-red-500 rounded-full items-center justify-center px-1">
+                    <Text className="text-white text-[10px] font-bold">
+                      {unreadNotificationCount > 9
+                        ? "9+"
+                        : unreadNotificationCount}
+                    </Text>
+                  </View>
+                )}
               </TouchableOpacity>
             </View>
           </View>

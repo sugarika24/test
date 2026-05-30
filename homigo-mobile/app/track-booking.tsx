@@ -35,7 +35,7 @@ export default function TrackBookingScreen() {
   const markerRef = useRef<any>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isFetchingRouteRef = useRef(false);
-  const lastRouteKeyRef = useRef<string>("");
+  const lastRouteKeyRef = useRef("");
 
   const rotationAnim = useRef(new Animated.Value(0)).current;
 
@@ -151,8 +151,13 @@ export default function TrackBookingScreen() {
   }
 
   async function fetchRoute(origin: Coordinate, dest: Coordinate) {
+    console.log("ORS key exists:", !!ORS_API_KEY);
+    console.log("ORS key length:", ORS_API_KEY.length);
+
     if (!ORS_API_KEY) {
       console.log("Missing ORS API key");
+      setRouteCoordinates([origin, dest]);
+      fitMapToPoints([origin, dest]);
       return;
     }
 
@@ -168,12 +173,13 @@ export default function TrackBookingScreen() {
       setRouteLoading(true);
 
       const response = await fetch(
-        "https://api.openrouteservice.org/v2/directions/driving-car/geojson",
+        "https://api.openrouteservice.org/v2/directions/foot-walking/geojson",
         {
           method: "POST",
           headers: {
-            Authorization: ORS_API_KEY,
+            Authorization: ORS_API_KEY.trim(),
             "Content-Type": "application/json",
+            Accept: "application/json",
           },
           body: JSON.stringify({
             coordinates: [
@@ -184,14 +190,48 @@ export default function TrackBookingScreen() {
         },
       );
 
-      const data = await response.json();
+      const rawText = await response.text();
+
+      console.log("ORS status:", response.status);
+      console.log("ORS content-type:", response.headers.get("content-type"));
+      console.log("ORS raw response:", rawText.slice(0, 500));
+
+      let data: any = null;
+
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        console.log("ORS returned non-JSON response");
+
+        setRouteCoordinates([origin, dest]);
+        setDistanceKm(null);
+        setDurationMin(null);
+        fitMapToPoints([origin, dest]);
+        return;
+      }
 
       if (!response.ok) {
         console.log("ORS route error:", data);
+
+        setRouteCoordinates([origin, dest]);
+        setDistanceKm(null);
+        setDurationMin(null);
+        fitMapToPoints([origin, dest]);
         return;
       }
 
       const feature = data?.features?.[0];
+
+      if (!feature) {
+        console.log("ORS no route feature found:", data);
+
+        setRouteCoordinates([origin, dest]);
+        setDistanceKm(null);
+        setDurationMin(null);
+        fitMapToPoints([origin, dest]);
+        return;
+      }
+
       const geometryCoords = feature?.geometry?.coordinates || [];
       const summary = feature?.properties?.summary;
 
@@ -202,23 +242,30 @@ export default function TrackBookingScreen() {
         }),
       );
 
-      setRouteCoordinates(convertedCoords);
+      if (convertedCoords.length > 0) {
+        setRouteCoordinates(convertedCoords);
+        fitMapToPoints(convertedCoords);
+      } else {
+        setRouteCoordinates([origin, dest]);
+        fitMapToPoints([origin, dest]);
+      }
+
       setDistanceKm(
         typeof summary?.distance === "number" ? summary.distance / 1000 : null,
       );
+
       setDurationMin(
         typeof summary?.duration === "number" ? summary.duration / 60 : null,
       );
 
       lastRouteKeyRef.current = routeKey;
-
-      if (convertedCoords.length > 0) {
-        fitMapToPoints(convertedCoords);
-      } else {
-        fitMapToPoints([origin, dest]);
-      }
     } catch (error) {
       console.log("Failed to fetch ORS route:", error);
+
+      setRouteCoordinates([origin, dest]);
+      setDistanceKm(null);
+      setDurationMin(null);
+      fitMapToPoints([origin, dest]);
     } finally {
       isFetchingRouteRef.current = false;
       setRouteLoading(false);
@@ -326,11 +373,7 @@ export default function TrackBookingScreen() {
             anchor={{ x: 0.5, y: 0.5 }}
             flat
           >
-            <Animated.View
-              style={{
-                transform: [{ rotate }],
-              }}
-            >
+            <Animated.View style={{ transform: [{ rotate }] }}>
               <View
                 style={{
                   backgroundColor: "#FE4D01",
@@ -360,7 +403,6 @@ export default function TrackBookingScreen() {
         )}
       </MapView>
 
-      {/* Back Button */}
       <TouchableOpacity
         onPress={() => router.back()}
         className="absolute top-12 left-5 w-12 h-12 bg-white rounded-full items-center justify-center shadow-md"
@@ -369,7 +411,6 @@ export default function TrackBookingScreen() {
         <Ionicons name="arrow-back" size={22} color="#FE8B4C" />
       </TouchableOpacity>
 
-      {/* Re-center Button */}
       <TouchableOpacity
         onPress={() => {
           if (routeCoordinates.length > 0) {
@@ -384,7 +425,6 @@ export default function TrackBookingScreen() {
         <Ionicons name="locate" size={22} color="#FE8B4C" />
       </TouchableOpacity>
 
-      {/* Info Card */}
       <View className="absolute bottom-8 left-5 right-5 bg-white rounded-2xl p-5 shadow-lg border border-gray-100">
         <View className="flex-row items-center mb-2">
           <Ionicons name="location-outline" size={22} color="#FE8B4C" />
@@ -401,7 +441,6 @@ export default function TrackBookingScreen() {
           {address || "Address not provided"}
         </Text>
 
-        {/* Status Section */}
         <View className="bg-[#FEF3E8] rounded-xl p-3 mt-2">
           {loading ? (
             <View className="flex-row items-center">

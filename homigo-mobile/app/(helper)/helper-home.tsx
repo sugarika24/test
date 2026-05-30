@@ -16,6 +16,7 @@ import { getHelperBookings } from "../../services/bookingService";
 import { getUnreadNotificationCount } from "../../services/notificationService";
 import { ReviewItem } from "@/types/review";
 import ChatHeaderButton from "@/components/ChatHeaderButton";
+import { getSocket } from "../../services/socketService";
 
 type HelperBookingItem = {
   id: number;
@@ -37,19 +38,36 @@ export default function HelperHomeScreen() {
   const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
-    if (user?.id && token) {
-      fetchDashboardData();
-    } else {
-      setReviewsLoading(false);
-      setBookingsLoading(false);
-    }
-  }, [user?.id, token]);
+    let cleanupSocket: any = null;
 
-  useFocusEffect(
-    React.useCallback(() => {
-      loadUnreadCount();
-    }, []),
-  );
+    const attachSocketListener = () => {
+      const socket = getSocket();
+
+      if (!socket) return;
+
+      const handleNotification = async () => {
+        console.log("Helper badge refresh triggered");
+        await loadUnreadCount();
+      };
+
+      socket.on("notification", handleNotification);
+
+      cleanupSocket = () => {
+        socket.off("notification", handleNotification);
+      };
+    };
+
+    attachSocketListener();
+
+    const timer = setTimeout(() => {
+      attachSocketListener();
+    }, 1000);
+
+    return () => {
+      clearTimeout(timer);
+      if (cleanupSocket) cleanupSocket();
+    };
+  }, []);
 
   async function loadUnreadCount() {
     try {
@@ -232,8 +250,9 @@ export default function HelperHomeScreen() {
                     size={22}
                     color="#FE8B4C"
                   />
+
                   {unreadCount > 0 && (
-                    <View className="absolute -top-2 -right-2 bg-[#FE4D01] rounded-full px-1 min-w-[18px] h-[18px] items-center justify-center">
+                    <View className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-red-500 rounded-full items-center justify-center px-1">
                       <Text className="text-white text-[10px] font-bold">
                         {unreadCount > 9 ? "9+" : unreadCount}
                       </Text>

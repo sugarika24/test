@@ -1,30 +1,42 @@
 import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { router } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "../context/AuthContext";
 
 export default function IndexScreen() {
   const { user, isReady } = useAuth();
 
   useEffect(() => {
-    if (!isReady) return;
+    async function checkNavigation() {
+      if (!isReady) return;
 
-    if (!user) {
-      router.replace("/(auth)/login");
-      return;
+      const hasSeenOnboarding = await AsyncStorage.getItem("hasSeenOnboarding");
+
+      if (!hasSeenOnboarding) {
+        router.replace("/onboarding");
+        return;
+      }
+
+      if (!user) {
+        router.replace("/(auth)/login");
+        return;
+      }
+
+      if (user.role === "HELPER") {
+        router.replace("/(helper)/helper-home");
+        return;
+      }
+
+      if (user.role === "ADMIN") {
+        router.replace("/(admin)/dashboard");
+        return;
+      }
+
+      router.replace("/(tabs)");
     }
 
-    if (user.role === "HELPER") {
-      router.replace("/(helper)/helper-home");
-      return;
-    }
-
-    if (user.role === "ADMIN") {
-      router.replace("/(admin)/dashboard");
-      return;
-    }
-
-    router.replace("/(tabs)");
+    checkNavigation();
   }, [user, isReady]);
 
   return (

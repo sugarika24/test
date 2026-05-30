@@ -9,15 +9,18 @@ import {
   ScrollView,
   RefreshControl,
 } from "react-native";
+import * as Location from "expo-location";
 import { useAuth } from "../../context/AuthContext";
 import { cancelBooking, getUserBookings } from "../../services/bookingService";
 import { getReviewByBooking } from "../../services/reviewService";
+import { createEmergencyAlert } from "../../services/emergencyService";
 import { Booking } from "../../types/booking";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
 export default function UserBookingsScreen() {
   const { token } = useAuth();
+
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -25,7 +28,7 @@ export default function UserBookingsScreen() {
 
   useEffect(() => {
     fetchBookings();
-  }, []);
+  }, [token]);
 
   async function fetchBookings() {
     if (!token) return;
@@ -35,6 +38,7 @@ export default function UserBookingsScreen() {
 
       const res = await getUserBookings(token);
       const fetchedBookings = res.bookings || [];
+
       setBookings(fetchedBookings);
 
       const completedBookings = fetchedBookings.filter(
@@ -52,8 +56,7 @@ export default function UserBookingsScreen() {
         }),
       );
 
-      const reviewMapObject = Object.fromEntries(reviewEntries);
-      setReviewsMap(reviewMapObject);
+      setReviewsMap(Object.fromEntries(reviewEntries));
     } catch (error: any) {
       Alert.alert("Error", error.message || "Failed to load bookings");
     } finally {
@@ -73,12 +76,63 @@ export default function UserBookingsScreen() {
           style: "destructive",
           onPress: async () => {
             if (!token) return;
+
             try {
               await cancelBooking(id, token, "Cancelled by user");
               Alert.alert("Success", "Booking cancelled successfully");
               fetchBookings();
             } catch (error: any) {
               Alert.alert("Error", error.message || "Failed to cancel booking");
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  async function handleSOS(booking: Booking) {
+    Alert.alert(
+      "Send Emergency Alert?",
+      "This will notify the admin with your booking details and current location.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Send SOS",
+          style: "destructive",
+          onPress: async () => {
+            if (!token) return;
+
+            try {
+              const { status } =
+                await Location.requestForegroundPermissionsAsync();
+
+              if (status !== "granted") {
+                Alert.alert(
+                  "Location Required",
+                  "Location permission is required to send SOS alert.",
+                );
+                return;
+              }
+
+              const location = await Location.getCurrentPositionAsync({});
+
+              await createEmergencyAlert(token, {
+                booking_id: booking.id,
+                emergency_type: "UNSAFE_BEHAVIOUR",
+                message: "User triggered SOS emergency alert.",
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+              });
+
+              Alert.alert(
+                "SOS Sent",
+                "Emergency alert has been sent to admin.",
+              );
+            } catch (error: any) {
+              Alert.alert(
+                "Error",
+                error.message || "Failed to send emergency alert",
+              );
             }
           },
         },
@@ -154,6 +208,7 @@ export default function UserBookingsScreen() {
 
   const formatPaidAt = (paidAt?: string | null) => {
     if (!paidAt) return null;
+
     try {
       return new Date(paidAt).toLocaleString();
     } catch {
@@ -165,6 +220,7 @@ export default function UserBookingsScreen() {
     return (
       <View className="flex-1 items-center justify-center bg-gray-50">
         <ActivityIndicator size="large" color="#FE8B4C" />
+        <Text className="text-gray-500 mt-3">Loading your bookings...</Text>
       </View>
     );
   }
@@ -185,11 +241,13 @@ export default function UserBookingsScreen() {
             <Text className="text-2xl font-bold text-[#FE8B4C] mb-1">
               My Bookings
             </Text>
+
             <Text className="text-gray-500 text-sm">
               {bookings.length} {bookings.length === 1 ? "booking" : "bookings"}{" "}
               found
             </Text>
           </View>
+
           <View className="bg-[#FE8B4C]/10 p-3 rounded-full">
             <MaterialCommunityIcons
               name="calendar-clock"
@@ -217,9 +275,11 @@ export default function UserBookingsScreen() {
             <View className="w-24 h-24 bg-gray-100 rounded-full items-center justify-center mb-4">
               <Ionicons name="calendar-outline" size={48} color="#d1d5db" />
             </View>
+
             <Text className="text-gray-400 text-lg font-medium mb-2">
               No Bookings Yet
             </Text>
+
             <Text className="text-gray-400 text-sm text-center">
               You haven&apos;t made any bookings yet.
               {"\n"}Start booking services now!
@@ -227,26 +287,51 @@ export default function UserBookingsScreen() {
           </View>
         ) : (
           bookings.map((booking) => {
-            const status = getStatusColor(booking.status);
-            const canCancel =
-              booking.status === "PENDING" || booking.status === "ACCEPTED";
+            const bookingStatus = String(booking.status || "")
+              .trim()
+              .toUpperCase();
+            const paymentStatus = String(booking.payment_status || "")
+              .trim()
+              .toUpperCase();
+
+            const status = getStatusColor(bookingStatus);
 
             const review = reviewsMap[booking.id];
             const hasReview = !!review;
 
+            const isPaid = ["PAID", "COMPLETED", "SUCCESS"].includes(
+              paymentStatus,
+            );
+
+            const canCancel =
+              ["PENDING", "ACCEPTED"].includes(bookingStatus) && !isPaid;
+
+            const canReschedule =
+              ["PENDING", "ACCEPTED"].includes(bookingStatus) && !isPaid;
+
             const canOpenChat = [
+              "PENDING",
               "ACCEPTED",
               "ON_THE_WAY",
               "IN_PROGRESS",
-              "COMPLETED",
-            ].includes(booking.status);
+            ].includes(bookingStatus);
 
             const canPayNow =
-              booking.payment_status !== "PAID" &&
-              booking.status !== "CANCELLED" &&
-              booking.status !== "COMPLETED" &&
-              booking.status !== "REJECTED";
+              ["ACCEPTED", "ON_THE_WAY", "IN_PROGRESS"].includes(
+                bookingStatus,
+              ) &&
+              !isPaid &&
+              booking.payment_method !== "COD";
 
+            const canTrackProgress = ["ON_THE_WAY", "IN_PROGRESS"].includes(
+              bookingStatus,
+            );
+
+            const canSendSOS = [
+              "ACCEPTED",
+              "ON_THE_WAY",
+              "IN_PROGRESS",
+            ].includes(bookingStatus);
             return (
               <View
                 key={booking.id}
@@ -258,6 +343,7 @@ export default function UserBookingsScreen() {
                       {booking.service_name || "Home Service"}
                     </Text>
                   </View>
+
                   <View className={`${status.bg} px-3 py-1 rounded-full`}>
                     <View className="flex-row items-center">
                       <Ionicons
@@ -280,10 +366,12 @@ export default function UserBookingsScreen() {
                       {booking.helper_name?.charAt(0)?.toUpperCase() || "H"}
                     </Text>
                   </View>
+
                   <View className="ml-3">
                     <Text className="text-gray-500 text-xs">
                       Service Provider
                     </Text>
+
                     <Text className="text-gray-800 font-medium">
                       {booking.helper_name || "Helper"}
                     </Text>
@@ -297,16 +385,33 @@ export default function UserBookingsScreen() {
                       size={16}
                       color="#9ca3af"
                     />
+
                     <Text className="text-gray-600 text-sm ml-2">
-                      {booking.booking_date}
+                      {new Date(booking.booking_date).toLocaleDateString(
+                        "en-GB",
+                        {
+                          day: "2-digit",
+                          month: "short",
+                          year: "numeric",
+                        },
+                      )}
                     </Text>
                   </View>
 
                   <View className="flex-row items-center">
                     <Ionicons name="time-outline" size={16} color="#9ca3af" />
+
                     <Text className="text-gray-600 text-sm ml-2">
-                      {booking.start_time}{" "}
-                      {booking.end_time ? `- ${booking.end_time}` : ""}
+                      {new Date(booking.start_time).toLocaleTimeString(
+                        "en-GB",
+                        {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        },
+                      )}{" "}
+                      {booking.end_time
+                        ? `- ${new Date(booking.end_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+                        : ""}
                     </Text>
                   </View>
 
@@ -317,6 +422,7 @@ export default function UserBookingsScreen() {
                         size={16}
                         color="#9ca3af"
                       />
+
                       <Text
                         className="text-gray-600 text-sm ml-2 flex-1"
                         numberOfLines={1}
@@ -328,10 +434,11 @@ export default function UserBookingsScreen() {
 
                   <View className="flex-row items-center justify-between mt-2 pt-2 border-t border-gray-100">
                     <Text className="text-gray-600 text-sm">
-                      {booking.status === "COMPLETED"
+                      {bookingStatus === "COMPLETED"
                         ? "Total Amount"
                         : "Estimated Amount"}
                     </Text>
+
                     <Text className="text-[#FE8B4C] font-bold text-lg">
                       Rs.
                       {booking.status === "COMPLETED"
@@ -346,27 +453,35 @@ export default function UserBookingsScreen() {
                     <Text className="text-gray-500 text-xs">
                       Payment Status
                     </Text>
+
                     <View
                       className={`px-2 py-1 rounded-full ${
                         booking.payment_status === "PAID"
                           ? "bg-green-100"
-                          : "bg-yellow-100"
+                          : booking.payment_status === "INITIATED"
+                            ? "bg-orange-100"
+                            : "bg-yellow-100"
                       }`}
                     >
                       <Text
                         className={`text-xs font-semibold ${
                           booking.payment_status === "PAID"
                             ? "text-green-700"
-                            : "text-yellow-700"
+                            : booking.payment_status === "INITIATED"
+                              ? "text-orange-700"
+                              : "text-yellow-700"
                         }`}
                       >
-                        {booking.payment_status || "PENDING"}
+                        {booking.payment_method === "COD"
+                          ? "CASH ON DELIVERY"
+                          : booking.payment_status || "UNPAID"}
                       </Text>
                     </View>
                   </View>
 
                   <View className="flex-row justify-between items-center mb-1">
                     <Text className="text-gray-500 text-xs">Method</Text>
+
                     <Text className="text-gray-700 text-xs font-medium">
                       {booking.payment_method || "Not selected"}
                     </Text>
@@ -377,6 +492,7 @@ export default function UserBookingsScreen() {
                       <Text className="text-gray-500 text-xs">
                         Transaction ID
                       </Text>
+
                       <Text className="text-gray-700 text-xs font-medium">
                         {booking.transaction_id}
                       </Text>
@@ -386,11 +502,26 @@ export default function UserBookingsScreen() {
                   {booking.paid_at ? (
                     <View className="flex-row justify-between items-center">
                       <Text className="text-gray-500 text-xs">Paid At</Text>
+
                       <Text className="text-gray-700 text-xs font-medium">
                         {formatPaidAt(booking.paid_at)}
                       </Text>
                     </View>
                   ) : null}
+
+                  {booking.status === "PENDING" &&
+                    booking.payment_status !== "PAID" && (
+                      <Text className="text-yellow-700 text-xs mt-2">
+                        Payment will be available after helper accepts your
+                        booking.
+                      </Text>
+                    )}
+
+                  {booking.payment_status === "PAID" && (
+                    <Text className="text-green-700 text-xs mt-2 font-semibold">
+                      This booking has been paid successfully.
+                    </Text>
+                  )}
                 </View>
 
                 <View className="flex-row flex-wrap gap-3 mt-4">
@@ -405,31 +536,33 @@ export default function UserBookingsScreen() {
                     </TouchableOpacity>
                   )}
 
-                  {booking.latitude && booking.longitude && (
+                  {canReschedule && (
                     <TouchableOpacity
-                      className="flex-1 min-w-[45%] bg-[#FEF3E8] rounded-xl py-3 items-center"
+                      className="flex-1 min-w-[45%] bg-blue-50 rounded-xl py-3 items-center border border-blue-200"
                       onPress={() =>
                         router.push({
-                          pathname: "/booking-location",
+                          pathname: "/(tabs)/create-booking",
                           params: {
-                            latitude: String(booking.latitude),
-                            longitude: String(booking.longitude),
+                            mode: "reschedule",
+                            booking_id: String(booking.id),
+                            helper_id: String(booking.helper_id || ""),
+                            subcategory_id: String(
+                              booking.subcategory_id || "",
+                            ),
+                            helperName: booking.helper_name || "Helper",
+                            booking_date: booking.booking_date || "",
+                            start_time: booking.start_time || "",
+                            end_time: booking.end_time || "",
                             address: booking.service_address || "",
-                            service_name: booking.service_name || "Service",
+                            latitude: String(booking.latitude || ""),
+                            longitude: String(booking.longitude || ""),
                           },
                         })
                       }
                     >
-                      <View className="flex-row items-center">
-                        <Ionicons
-                          name="location-outline"
-                          size={16}
-                          color="#FE8B4C"
-                        />
-                        <Text className="text-[#FE8B4C] font-semibold text-sm ml-1">
-                          View Location
-                        </Text>
-                      </View>
+                      <Text className="text-blue-600 font-semibold text-sm">
+                        Reschedule
+                      </Text>
                     </TouchableOpacity>
                   )}
 
@@ -441,6 +574,25 @@ export default function UserBookingsScreen() {
                       <Text className="text-red-600 font-semibold text-sm">
                         Cancel Booking
                       </Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {canSendSOS && (
+                    <TouchableOpacity
+                      className="flex-1 min-w-[45%] bg-red-600 rounded-xl py-3 items-center"
+                      onPress={() => handleSOS(booking)}
+                    >
+                      <View className="flex-row items-center">
+                        <Ionicons
+                          name="warning-outline"
+                          size={18}
+                          color="white"
+                        />
+
+                        <Text className="text-white font-bold text-sm ml-2">
+                          SOS Emergency
+                        </Text>
+                      </View>
                     </TouchableOpacity>
                   )}
 
@@ -480,8 +632,7 @@ export default function UserBookingsScreen() {
                     </TouchableOpacity>
                   )}
 
-                  {(booking.status === "ON_THE_WAY" ||
-                    booking.status === "IN_PROGRESS") && (
+                  {canTrackProgress && (
                     <TouchableOpacity
                       className="flex-1 min-w-[45%] bg-[#FE8B4C] rounded-xl py-3 items-center"
                       onPress={() =>
@@ -509,9 +660,13 @@ export default function UserBookingsScreen() {
         )}
 
         {bookings.length > 0 && (
-          <TouchableOpacity className="bg-[#FE8B4C] rounded-2xl py-4 mt-4 items-center shadow-sm">
+          <TouchableOpacity
+            className="bg-[#FE8B4C] rounded-2xl py-4 mt-4 items-center shadow-sm"
+            onPress={() => router.push("/")}
+          >
             <View className="flex-row items-center">
               <Ionicons name="search-outline" size={20} color="white" />
+
               <Text className="text-white font-semibold text-base ml-2">
                 Book New Service
               </Text>

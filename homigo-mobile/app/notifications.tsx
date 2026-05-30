@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState, useEffect } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -18,6 +18,7 @@ import {
   markNotificationAsRead,
   NotificationItem,
 } from "../services/notificationService";
+import { getSocket } from "../services/socketService";
 
 function formatNotificationTime(dateString: string) {
   const date = new Date(dateString);
@@ -76,6 +77,45 @@ export default function NotificationsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
+
+  useEffect(() => {
+    let cleanupSocket: any = null;
+
+    const attachSocketListener = () => {
+      const socket = getSocket();
+
+      if (!socket) {
+        return;
+      }
+
+      const handleNotification = async () => {
+        try {
+          console.log("Notification screen auto-refresh triggered");
+          const data = await getMyNotifications();
+          setNotifications(data);
+        } catch (error) {
+          console.log("Failed to refresh notifications:", error);
+        }
+      };
+
+      socket.on("notification", handleNotification);
+
+      cleanupSocket = () => {
+        socket.off("notification", handleNotification);
+      };
+    };
+
+    attachSocketListener();
+
+    const timer = setTimeout(() => {
+      attachSocketListener();
+    }, 1000);
+
+    return () => {
+      clearTimeout(timer);
+      if (cleanupSocket) cleanupSocket();
+    };
+  }, []);
 
   const unreadCount = useMemo(
     () => notifications.filter((item) => !item.is_read).length,

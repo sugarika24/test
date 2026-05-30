@@ -2,6 +2,19 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const TOKEN_KEY = "homigo_token";
 const USER_KEY = "homigo_user";
+const authClearedListeners = new Set<() => void>();
+
+export function onAuthCleared(listener: () => void) {
+  authClearedListeners.add(listener);
+
+  return () => {
+    authClearedListeners.delete(listener);
+  };
+}
+
+function notifyAuthCleared() {
+  authClearedListeners.forEach((listener) => listener());
+}
 
 export async function saveAuth(token: string, user: any) {
   await AsyncStorage.setItem(TOKEN_KEY, token);
@@ -20,4 +33,5 @@ export async function getStoredUser() {
 export async function clearAuth() {
   await AsyncStorage.removeItem(TOKEN_KEY);
   await AsyncStorage.removeItem(USER_KEY);
+  notifyAuthCleared();
 }

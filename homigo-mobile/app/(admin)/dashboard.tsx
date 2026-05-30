@@ -24,6 +24,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import { getSocket } from "@/services/socketService";
 
 export default function AdminDashboardScreen() {
   const { token, user, signOut } = useAuth();
@@ -44,7 +45,34 @@ export default function AdminDashboardScreen() {
   const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
-    loadDashboardData();
+    let cleanupSocket: any = null;
+
+    const attachSocketListener = () => {
+      const socket = getSocket();
+
+      if (!socket) return;
+
+      const handleNotification = async () => {
+        await loadUnreadCount();
+      };
+
+      socket.on("notification", handleNotification);
+
+      cleanupSocket = () => {
+        socket.off("notification", handleNotification);
+      };
+    };
+
+    attachSocketListener();
+
+    const timer = setTimeout(() => {
+      attachSocketListener();
+    }, 1000);
+
+    return () => {
+      clearTimeout(timer);
+      if (cleanupSocket) cleanupSocket();
+    };
   }, []);
 
   useFocusEffect(
@@ -255,11 +283,12 @@ export default function AdminDashboardScreen() {
                 <View className="relative">
                   <Ionicons
                     name="notifications-outline"
-                    size={20}
+                    size={22}
                     color="#FE8B4C"
                   />
+
                   {unreadCount > 0 && (
-                    <View className="absolute -top-2 -right-2 bg-[#FE4D01] rounded-full min-w-[18px] h-[18px] items-center justify-center px-1">
+                    <View className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-red-500 rounded-full items-center justify-center px-1">
                       <Text className="text-white text-[10px] font-bold">
                         {unreadCount > 9 ? "9+" : unreadCount}
                       </Text>
@@ -456,6 +485,13 @@ export default function AdminDashboardScreen() {
           <Text className="text-lg font-bold text-gray-800 mb-3">
             Quick Actions
           </Text>
+
+          <NavButton
+            title="Emergency Alerts"
+            subtitle="View and manage SOS emergency cases"
+            onPress={() => router.push("/emergency-alerts" as any)}
+            icon="warning-outline"
+          />
 
           <NavButton
             title="Manage Helpers"

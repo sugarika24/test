@@ -1,6 +1,12 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { router } from "expo-router";
-import { clearAuth, getStoredUser, getToken, saveAuth } from "../utils/storage";
+import {
+  clearAuth,
+  getStoredUser,
+  getToken,
+  onAuthCleared,
+  saveAuth,
+} from "../utils/storage";
 import {
   loginUser,
   registerUser,
@@ -11,6 +17,7 @@ import {
   verifyRegisterEmailOtp as verifyRegisterEmailOtpService,
 } from "../services/authService";
 import { LoginPayload, RegisterPayload, User } from "../types/auth";
+import { connectSocket, disconnectSocket } from "../services/socketService";
 
 type AuthContextType = {
   user: User | null;
@@ -55,6 +62,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loadAuth();
   }, []);
 
+  useEffect(() => {
+    return onAuthCleared(() => {
+      disconnectSocket();
+      setUser(null);
+      setToken(null);
+    });
+  }, []);
+
   async function loadAuth() {
     try {
       const storedToken = await getToken();
@@ -63,6 +78,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (storedToken && storedUser) {
         setToken(storedToken);
         setUser(storedUser);
+
+        if (storedUser.id) {
+          connectSocket(storedUser.id);
+        }
       }
     } catch (error) {
       console.log("loadAuth error:", error);
@@ -75,9 +94,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     try {
       const data = await loginUser(payload);
+
       await saveAuth(data.token, data.user);
+
       setToken(data.token);
       setUser(data.user);
+
+      if (data.user.id) {
+        connectSocket(data.user.id);
+      }
+
       router.replace(getRouteByRole(data.user.role) as any);
     } finally {
       setLoading(false);
@@ -115,9 +141,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       console.log("logout error:", error);
     } finally {
+      disconnectSocket();
+
       await clearAuth();
       setUser(null);
       setToken(null);
+
       router.replace("/(auth)/login");
     }
   }
@@ -158,8 +187,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
+
   if (!context) {
     throw new Error("useAuth must be used inside AuthProvider");
   }
+
   return context;
 }

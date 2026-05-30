@@ -26,6 +26,7 @@ import { router } from "expo-router";
 
 export default function HelperBookingsScreen() {
   const { token } = useAuth();
+
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -48,17 +49,25 @@ export default function HelperBookingsScreen() {
     };
   }, []);
 
+  function normalizeStatus(status?: string | null) {
+    return String(status || "")
+      .trim()
+      .toUpperCase();
+  }
+
   async function fetchBookings() {
     if (!token) return;
 
     try {
       setLoading(true);
+
       const res = await getHelperBookings(token);
       const fetchedBookings = res.bookings || [];
+
       setBookings(fetchedBookings);
 
       const activeTrackedBooking = fetchedBookings.find(
-        (booking: Booking) => booking.status === "ON_THE_WAY",
+        (booking: Booking) => normalizeStatus(booking.status) === "ON_THE_WAY",
       );
 
       if (activeTrackedBooking && !locationIntervalRef.current) {
@@ -96,38 +105,23 @@ export default function HelperBookingsScreen() {
   }
 
   async function sendCurrentLocation(bookingId: number | string) {
-    if (!token) {
-      console.log("No token found");
-      return;
-    }
+    if (!token) return;
 
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      console.log("Location permission status:", status);
 
-      if (status !== "granted") {
-        console.log("Location permission denied");
-        return;
-      }
+      if (status !== "granted") return;
 
       const currentLocation = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
 
-      const latitude = currentLocation.coords.latitude;
-      const longitude = currentLocation.coords.longitude;
-
-      console.log("Current helper location:", latitude, longitude);
-      console.log("Sending bookingId:", bookingId);
-
-      const res = await updateHelperLiveLocation(
+      await updateHelperLiveLocation(
         bookingId,
-        latitude,
-        longitude,
+        currentLocation.coords.latitude,
+        currentLocation.coords.longitude,
         token,
       );
-
-      console.log("Live location API success:", res);
     } catch (error) {
       console.log("sendCurrentLocation error:", error);
     }
@@ -138,6 +132,7 @@ export default function HelperBookingsScreen() {
       clearInterval(locationIntervalRef.current);
       locationIntervalRef.current = null;
     }
+
     setTrackingBookingId(null);
   }
 
@@ -157,18 +152,13 @@ export default function HelperBookingsScreen() {
 
     try {
       setActionLoadingId(bookingId);
-      console.log("Marking booking as ON_THE_WAY:", bookingId);
 
       await markOnTheWay(bookingId, token);
-      console.log("Booking marked ON_THE_WAY successfully");
-
       startLiveTracking(bookingId);
-      console.log("Live tracking started for booking:", bookingId);
 
       Alert.alert("Success", "Marked as on the way");
       fetchBookings();
     } catch (error: any) {
-      console.log("handleOnTheWay error:", error);
       Alert.alert("Error", error.message || "Failed to mark on the way");
     } finally {
       setActionLoadingId(null);
@@ -180,7 +170,9 @@ export default function HelperBookingsScreen() {
 
     try {
       setActionLoadingId(bookingId);
+
       await startBooking(bookingId, token);
+
       Alert.alert("Success", "Booking started");
       fetchBookings();
     } catch (error: any) {
@@ -195,8 +187,10 @@ export default function HelperBookingsScreen() {
 
     try {
       setActionLoadingId(bookingId);
+
       await completeBooking(bookingId, token);
       stopLiveTracking();
+
       Alert.alert("Success", "Booking completed");
       fetchBookings();
     } catch (error: any) {
@@ -207,7 +201,7 @@ export default function HelperBookingsScreen() {
   }
 
   const getStatusConfig = (status: string) => {
-    switch (status) {
+    switch (normalizeStatus(status)) {
       case "PENDING":
         return {
           bg: "#FEF3C7",
@@ -215,6 +209,15 @@ export default function HelperBookingsScreen() {
           icon: "time-outline",
           label: "Pending",
         };
+
+      case "RESCHEDULED":
+        return {
+          bg: "#E0E7FF",
+          text: "#4338CA",
+          icon: "calendar-outline",
+          label: "Rescheduled",
+        };
+
       case "ACCEPTED":
         return {
           bg: "#DBEAFE",
@@ -222,6 +225,7 @@ export default function HelperBookingsScreen() {
           icon: "checkmark-circle-outline",
           label: "Accepted",
         };
+
       case "ON_THE_WAY":
         return {
           bg: "#EDE9FE",
@@ -229,6 +233,7 @@ export default function HelperBookingsScreen() {
           icon: "car-outline",
           label: "On The Way",
         };
+
       case "IN_PROGRESS":
         return {
           bg: "#FFEDD5",
@@ -236,6 +241,7 @@ export default function HelperBookingsScreen() {
           icon: "construct-outline",
           label: "In Progress",
         };
+
       case "COMPLETED":
         return {
           bg: "#DCFCE7",
@@ -243,6 +249,7 @@ export default function HelperBookingsScreen() {
           icon: "checkmark-done-outline",
           label: "Completed",
         };
+
       case "CANCELLED":
         return {
           bg: "#FEE2E2",
@@ -250,19 +257,33 @@ export default function HelperBookingsScreen() {
           icon: "close-circle-outline",
           label: "Cancelled",
         };
+
+      case "REJECTED":
+        return {
+          bg: "#FEE2E2",
+          text: "#991B1B",
+          icon: "close-circle-outline",
+          label: "Rejected",
+        };
+
       default:
         return {
           bg: "#F3F4F6",
           text: "#374151",
           icon: "help-outline",
-          label: status,
+          label: status || "Unknown",
         };
     }
   };
 
   const formatDate = (date?: string) => {
     if (!date) return "N/A";
-    return new Date(date).toLocaleDateString();
+
+    try {
+      return new Date(date).toLocaleDateString();
+    } catch {
+      return date;
+    }
   };
 
   const formatTime = (time?: string) => {
@@ -270,10 +291,11 @@ export default function HelperBookingsScreen() {
     return time;
   };
 
-  if (loading) {
+  if (loading && !refreshing) {
     return (
       <View className="flex-1 items-center justify-center bg-gray-50">
         <ActivityIndicator size="large" color="#FE8B4C" />
+        <Text className="text-gray-500 mt-3">Loading helper bookings...</Text>
       </View>
     );
   }
@@ -306,11 +328,13 @@ export default function HelperBookingsScreen() {
               <Text className="text-2xl font-bold text-[#FE8B4C]">
                 My Bookings
               </Text>
+
               <Text className="text-gray-500 text-sm mt-1">
                 {bookings.length}{" "}
                 {bookings.length === 1 ? "booking" : "bookings"} found
               </Text>
             </View>
+
             <View className="bg-[#FEF3E8] p-3 rounded-full">
               <MaterialCommunityIcons
                 name="calendar-clock"
@@ -323,16 +347,20 @@ export default function HelperBookingsScreen() {
 
         <View className="px-5 pt-4">
           {bookings.map((booking) => {
-            const statusConfig = getStatusConfig(booking.status);
+            const bookingStatus = normalizeStatus(booking.status);
+            const statusConfig = getStatusConfig(bookingStatus);
             const isActionLoading = actionLoadingId === booking.id;
             const isTrackingThisBooking = trackingBookingId === booking.id;
+
+            const canAcceptOrReject = ["PENDING", "RESCHEDULED"].includes(
+              bookingStatus,
+            );
 
             const canOpenChat = [
               "ACCEPTED",
               "ON_THE_WAY",
               "IN_PROGRESS",
-              "COMPLETED",
-            ].includes(booking.status);
+            ].includes(bookingStatus);
 
             return (
               <View
@@ -344,6 +372,7 @@ export default function HelperBookingsScreen() {
                     <Text className="text-lg font-bold text-gray-800">
                       {booking.service_name || "Home Service"}
                     </Text>
+
                     <Text className="text-xs text-gray-500 mt-1">
                       #{booking.booking_number}
                     </Text>
@@ -358,6 +387,7 @@ export default function HelperBookingsScreen() {
                       size={12}
                       color={statusConfig.text}
                     />
+
                     <Text
                       style={{ color: statusConfig.text }}
                       className="text-xs font-medium ml-1"
@@ -373,10 +403,12 @@ export default function HelperBookingsScreen() {
                       {booking.user_name?.charAt(0)?.toUpperCase() || "U"}
                     </Text>
                   </View>
+
                   <View className="ml-3 flex-1">
                     <Text className="text-sm font-semibold text-gray-800">
-                      {booking.user_name}
+                      {booking.user_name || "Customer"}
                     </Text>
+
                     <Text className="text-xs text-gray-500">Customer</Text>
                   </View>
                 </View>
@@ -388,16 +420,33 @@ export default function HelperBookingsScreen() {
                       size={14}
                       color="#9ca3af"
                     />
+
                     <Text className="text-sm text-gray-600 ml-2">
-                      {formatDate(booking.booking_date)}
+                      {new Date(booking.booking_date).toLocaleDateString(
+                        "en-GB",
+                        {
+                          day: "2-digit",
+                          month: "short",
+                          year: "numeric",
+                        },
+                      )}
                     </Text>
                   </View>
+
                   <View className="w-1/2 flex-row items-center mb-2">
                     <Ionicons name="time-outline" size={14} color="#9ca3af" />
+
                     <Text className="text-sm text-gray-600 ml-2">
-                      {formatTime(booking.start_time)}
+                      {new Date(booking.start_time).toLocaleTimeString(
+                        "en-GB",
+                        {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        },
+                      )}
                     </Text>
                   </View>
+
                   {booking.service_address && (
                     <View className="w-full flex-row items-start mt-1">
                       <Ionicons
@@ -405,6 +454,7 @@ export default function HelperBookingsScreen() {
                         size={14}
                         color="#9ca3af"
                       />
+
                       <Text
                         className="text-sm text-gray-600 ml-2 flex-1"
                         numberOfLines={2}
@@ -429,31 +479,33 @@ export default function HelperBookingsScreen() {
                   </TouchableOpacity>
                 )}
 
-                {booking.status === "ON_THE_WAY" && isTrackingThisBooking && (
+                {bookingStatus === "ON_THE_WAY" && isTrackingThisBooking && (
                   <View className="bg-green-50 border border-green-200 rounded-xl px-3 py-2 mb-3">
                     <Text className="text-green-700 text-sm font-medium">
                       Live tracking active
                     </Text>
+
                     <Text className="text-green-600 text-xs mt-1">
                       Your location is being updated every 10 seconds
                     </Text>
                   </View>
                 )}
 
-                {booking.final_amount && booking.status === "COMPLETED" && (
+                {booking.final_amount && bookingStatus === "COMPLETED" && (
                   <View className="mb-3 pt-2 border-t border-gray-100">
                     <View className="flex-row justify-between items-center">
                       <Text className="text-sm text-gray-500">
                         Total Amount
                       </Text>
+
                       <Text className="text-lg font-bold text-[#FE8B4C]">
-                        ${booking.final_amount}
+                        Rs. {booking.final_amount}
                       </Text>
                     </View>
                   </View>
                 )}
 
-                {booking.status === "PENDING" && (
+                {canAcceptOrReject && (
                   <View className="flex-row gap-2 mt-2">
                     <TouchableOpacity
                       className="flex-1 bg-[#FE8B4C] rounded-xl py-3 items-center"
@@ -489,44 +541,32 @@ export default function HelperBookingsScreen() {
                       }
                       disabled={isActionLoading}
                     >
-                      <Text className="text-white font-semibold">Reject</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                {booking.status === "ACCEPTED" && (
-                  <View className="flex-row gap-2 mt-2">
-                    <TouchableOpacity
-                      className="flex-1 bg-[#FE8B4C] rounded-xl py-3 items-center"
-                      onPress={() => handleOnTheWay(booking.id)}
-                      disabled={isActionLoading}
-                    >
                       {isActionLoading ? (
                         <ActivityIndicator size="small" color="white" />
                       ) : (
-                        <Text className="text-white font-semibold">
-                          On The Way
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      className="flex-1 bg-blue-500 rounded-xl py-3 items-center"
-                      onPress={() => handleStartJob(booking.id)}
-                      disabled={isActionLoading}
-                    >
-                      {isActionLoading ? (
-                        <ActivityIndicator size="small" color="white" />
-                      ) : (
-                        <Text className="text-white font-semibold">
-                          Start Job
-                        </Text>
+                        <Text className="text-white font-semibold">Reject</Text>
                       )}
                     </TouchableOpacity>
                   </View>
                 )}
 
-                {booking.status === "ON_THE_WAY" && (
+                {bookingStatus === "ACCEPTED" && (
+                  <TouchableOpacity
+                    className="bg-[#FE8B4C] rounded-xl py-3 mt-2 items-center"
+                    onPress={() => handleOnTheWay(booking.id)}
+                    disabled={isActionLoading}
+                  >
+                    {isActionLoading ? (
+                      <ActivityIndicator size="small" color="white" />
+                    ) : (
+                      <Text className="text-white font-semibold">
+                        On The Way
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+
+                {bookingStatus === "ON_THE_WAY" && (
                   <TouchableOpacity
                     className="bg-blue-500 rounded-xl py-3 mt-2 items-center"
                     onPress={() => handleStartJob(booking.id)}
@@ -542,7 +582,7 @@ export default function HelperBookingsScreen() {
                   </TouchableOpacity>
                 )}
 
-                {booking.status === "IN_PROGRESS" && (
+                {bookingStatus === "IN_PROGRESS" && (
                   <TouchableOpacity
                     className="bg-green-500 rounded-xl py-3 mt-2 items-center"
                     onPress={() => handleCompleteJob(booking.id)}
@@ -569,11 +609,13 @@ export default function HelperBookingsScreen() {
               size={64}
               color="#d1d5db"
             />
+
             <Text className="text-gray-400 text-lg font-medium mt-4">
               No Bookings Yet
             </Text>
+
             <Text className="text-gray-400 text-sm mt-1 text-center">
-              You don't have any bookings at the moment
+              You don&apos;t have any bookings at the moment
             </Text>
           </View>
         )}
