@@ -19,19 +19,116 @@ function generateEsewaSignature(totalAmount, transactionUuid, productCode) {
 
 function successPage(totalAmount, bookingId) {
   return `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>Payment Successful</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      </head>
-      <body style="font-family: Arial; text-align: center; padding: 40px;">
-        <h2 style="color: green;">Payment Successful</h2>
-        <p>Your payment of NPR ${totalAmount || ""} has been completed.</p>
-        <p>Booking ID: ${bookingId}</p>
-        <p>You can now go back to the Homigo app and refresh bookings.</p>
-      </body>
-    </html>
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>Payment Successful</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: linear-gradient(180deg, #ffffff, #fff8f5, #fff1ea);
+        font-family: Arial, sans-serif;
+        padding: 20px;
+      }
+
+      .card {
+        background: #fff;
+        width: 100%;
+        max-width: 420px;
+        border-radius: 28px;
+        padding: 30px;
+        text-align: center;
+        box-shadow: 0 15px 40px rgba(234, 76, 30, 0.15);
+        border: 1px solid rgba(0,0,0,0.06);
+      }
+
+      .icon {
+        width: 90px;
+        height: 90px;
+        border-radius: 45px;
+        background: #DCFCE7;
+        color: #16A34A;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 48px;
+        font-weight: bold;
+        margin: 0 auto 20px;
+      }
+
+      h1 {
+        color: #16A34A;
+        margin: 0;
+        font-size: 28px;
+      }
+
+      p {
+        color: #6B7280;
+        line-height: 1.5;
+      }
+
+      .amount {
+        background: #FFF2ED;
+        color: #EA4C1E;
+        padding: 16px;
+        border-radius: 16px;
+        font-size: 26px;
+        font-weight: bold;
+        margin: 20px 0;
+      }
+
+      .btn {
+        display: block;
+        text-decoration: none;
+        color: white;
+        background: linear-gradient(90deg, #FF6B35, #EA4C1E, #C93A0F);
+        padding: 16px;
+        border-radius: 16px;
+        font-weight: bold;
+        margin-top: 20px;
+      }
+
+      .small {
+        margin-top: 16px;
+        font-size: 13px;
+        color: #9CA3AF;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="card">
+      <div class="icon">✓</div>
+
+      <h1>Payment Successful</h1>
+
+      <p>Your payment has been completed successfully.</p>
+
+      <div class="amount">
+        NPR ${totalAmount || ""}
+      </div>
+
+      <p><strong>Booking ID:</strong> ${bookingId}</p>
+
+      <a
+        class="btn"
+        href="homigomobile://payment-success?bookingId=${bookingId}"
+      >
+        Return to Homigo
+      </a>
+
+      <p class="small">
+        If the app doesn't open automatically, return to Homigo manually.
+      </p>
+    </div>
+  </body>
+  </html>
   `;
 }
 
@@ -89,12 +186,12 @@ export const initiateEsewaPayment = async (req, res) => {
       });
     }
 
-   if (!["ACCEPTED", "ON_THE_WAY", "IN_PROGRESS"].includes(booking.status)) {
-  return res.status(400).json({
-    ok: false,
-    message: "Payment is available only after helper accepts the booking.",
-  });
-}
+    if (!["ACCEPTED", "ON_THE_WAY", "IN_PROGRESS"].includes(booking.status)) {
+      return res.status(400).json({
+        ok: false,
+        message: "Payment is available only after helper accepts the booking.",
+      });
+    }
 
     if (booking.payment_status === "PAID") {
       return res.status(400).json({
@@ -146,8 +243,8 @@ export const esewaCheckoutPage = async (req, res) => {
     const booking = bookingResult.rows[0];
 
     if (!["ACCEPTED", "ON_THE_WAY", "IN_PROGRESS"].includes(booking.status)) {
-  return res.send("Payment allowed only after helper accepts booking.");
-}
+      return res.send("Payment allowed only after helper accepts booking.");
+    }
 
     if (booking.payment_status === "PAID") {
       return res.send("This booking is already paid.");
@@ -198,10 +295,9 @@ export const esewaCheckoutPage = async (req, res) => {
           <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         </head>
 
-        <body onload="document.forms[0].submit()">
-          <h3 style="font-family: Arial; text-align: center; margin-top: 80px;">
-            Redirecting to eSewa...
-          </h3>
+        <body onload="document.forms[0].submit()" style="font-family: Arial; text-align: center; padding: 40px;">
+          <h3>Redirecting to eSewa...</h3>
+          <p>Please wait while we open the payment page.</p>
 
           <form method="POST" action="${ESEWA_PAYMENT_URL}">
             <input type="hidden" name="amount" value="${totalAmount}" />
@@ -213,7 +309,11 @@ export const esewaCheckoutPage = async (req, res) => {
             <input type="hidden" name="product_delivery_charge" value="0" />
             <input type="hidden" name="success_url" value="${successUrl}" />
             <input type="hidden" name="failure_url" value="${failureUrl}" />
-            <input type="hidden" name="signed_field_names" value="total_amount,transaction_uuid,product_code" />
+            <input
+              type="hidden"
+              name="signed_field_names"
+              value="total_amount,transaction_uuid,product_code"
+            />
             <input type="hidden" name="signature" value="${signature}" />
           </form>
         </body>
@@ -279,7 +379,9 @@ export const esewaSuccess = async (req, res) => {
     return res.send(successPage(total_amount, bookingId));
   } catch (error) {
     console.error("eSewa success error:", error);
-    return res.status(500).send(failurePage("Server error while updating payment."));
+    return res
+      .status(500)
+      .send(failurePage("Server error while updating payment."));
   }
 };
 
@@ -388,7 +490,9 @@ export const requestRefund = async (req, res) => {
       await createNotification({
         user_id: admin.id,
         title: "Refund Requested",
-        message: `Refund requested for booking ${booking.booking_number || booking.id}.`,
+        message: `Refund requested for booking ${
+          booking.booking_number || booking.id
+        }.`,
         type: "REFUND_REQUESTED",
         ref_table: "bookings",
         ref_id: booking.id,
@@ -397,7 +501,9 @@ export const requestRefund = async (req, res) => {
       io?.to(`user_${admin.id}`).emit("notification", {
         type: "REFUND_REQUESTED",
         title: "Refund Requested",
-        message: `Refund requested for booking ${booking.booking_number || booking.id}.`,
+        message: `Refund requested for booking ${
+          booking.booking_number || booking.id
+        }.`,
         bookingId: booking.id,
       });
     }
@@ -428,8 +534,21 @@ export const getAdminRefundRequests = async (req, res) => {
       FROM bookings b
       JOIN users u ON u.id = b.user_id
       JOIN users h ON h.id = b.helper_id
-      WHERE b.refund_status = 'REFUND_REQUESTED'
-      ORDER BY b.refund_requested_at DESC
+      WHERE b.refund_status IN (
+        'REFUND_REQUESTED',
+        'REFUND_APPROVED',
+        'REFUND_REJECTED',
+        'REFUNDED'
+      )
+      ORDER BY
+        CASE
+          WHEN b.refund_status = 'REFUND_REQUESTED' THEN 1
+          WHEN b.refund_status = 'REFUND_APPROVED' THEN 2
+          WHEN b.refund_status = 'REFUNDED' THEN 3
+          WHEN b.refund_status = 'REFUND_REJECTED' THEN 4
+          ELSE 5
+        END,
+        b.refund_requested_at DESC NULLS LAST
       `
     );
 
@@ -452,32 +571,57 @@ export const updateRefundStatus = async (req, res) => {
     const { bookingId } = req.params;
     const { refund_status, refund_admin_note } = req.body || {};
 
-    if (!["REFUND_APPROVED", "REFUND_REJECTED", "REFUNDED"].includes(refund_status)) {
+    if (
+      !["REFUND_APPROVED", "REFUND_REJECTED", "REFUNDED"].includes(
+        refund_status
+      )
+    ) {
       return res.status(400).json({
         ok: false,
         message: "Invalid refund status.",
       });
     }
 
+    let allowedCurrentStatuses = [];
+
+    if (refund_status === "REFUND_APPROVED") {
+      allowedCurrentStatuses = ["REFUND_REQUESTED"];
+    }
+
+    if (refund_status === "REFUND_REJECTED") {
+      allowedCurrentStatuses = ["REFUND_REQUESTED"];
+    }
+
+    if (refund_status === "REFUNDED") {
+      allowedCurrentStatuses = ["REFUND_APPROVED"];
+    }
+
     const result = await pool.query(
       `
       UPDATE bookings
-      SET refund_status = $1,
-          refund_admin_note = $2,
-          refund_decision_by = $3,
-          refund_decision_at = NOW(),
-          updated_at = NOW()
+      SET 
+        refund_status = $1,
+        refund_admin_note = $2,
+        refund_decision_by = $3,
+        refund_decision_at = NOW(),
+        updated_at = NOW()
       WHERE id = $4
-        AND refund_status = 'REFUND_REQUESTED'
+        AND refund_status = ANY($5)
       RETURNING *
       `,
-      [refund_status, refund_admin_note || null, adminId, bookingId]
+      [
+        refund_status,
+        refund_admin_note || null,
+        adminId,
+        bookingId,
+        allowedCurrentStatuses,
+      ]
     );
 
     if (result.rows.length === 0) {
       return res.status(400).json({
         ok: false,
-        message: "Refund request not found or already processed.",
+        message: "Refund request not found or invalid status transition.",
       });
     }
 

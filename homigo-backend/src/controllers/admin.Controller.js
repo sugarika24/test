@@ -1,5 +1,6 @@
 import { pool } from "../db/db.js";
 import createNotification from "../utils/createNotification.js";
+
 export const getPendingHelpers = async (req, res) => {
   try {
     const result = await pool.query(
@@ -78,7 +79,8 @@ export const getAllHelpersForAdmin = async (req, res) => {
         hvd.document_url
       FROM helper_profiles hp
       JOIN users u ON u.id = hp.user_id
-      LEFT JOIN helper_verification_documents hvd ON hvd.helper_user_id = u.id
+      LEFT JOIN helper_verification_documents hvd 
+        ON hvd.helper_user_id = u.id
       WHERE u.role = 'HELPER'
       ORDER BY hp.created_at DESC
       `
@@ -100,6 +102,7 @@ export const getAllHelpersForAdmin = async (req, res) => {
 export const approveHelper = async (req, res) => {
   try {
     const { helperUserId } = req.params;
+    const adminId = req.user.id;
 
     const helperCheck = await pool.query(
       `
@@ -127,29 +130,46 @@ export const approveHelper = async (req, res) => {
       });
     }
 
+    await pool.query("BEGIN");
+
     const result = await pool.query(
       `
       UPDATE helper_profiles
       SET
         verification_status = 'APPROVED',
         is_verified = true,
+        is_available = true,
         verified_by = $1,
         verified_at = NOW(),
         rejection_reason = NULL
       WHERE user_id = $2
       RETURNING *
       `,
-      [req.user.id, helperUserId]
+      [adminId, helperUserId]
+    );
+
+    await pool.query(
+      `
+      UPDATE helper_skills
+      SET
+        verification_status = 'APPROVED',
+        available = true
+      WHERE helper_id = $1
+      `,
+      [helperUserId]
     );
 
     await createNotification({
       user_id: helperUserId,
       title: "Account Approved",
-      message: "Your helper account has been approved. You can now accept bookings.",
+      message:
+        "Your helper account has been approved. You can now accept bookings.",
       type: "HELPER_APPROVED",
       ref_table: "users",
       ref_id: Number(helperUserId),
     });
+
+    await pool.query("COMMIT");
 
     return res.status(200).json({
       ok: true,
@@ -157,6 +177,7 @@ export const approveHelper = async (req, res) => {
       helper_profile: result.rows[0],
     });
   } catch (error) {
+    await pool.query("ROLLBACK");
     console.error("approveHelper error:", error);
     return res.status(500).json({
       ok: false,
@@ -169,6 +190,7 @@ export const rejectHelper = async (req, res) => {
   try {
     const { helperUserId } = req.params;
     const { rejection_reason } = req.body;
+    const adminId = req.user.id;
 
     const helperCheck = await pool.query(
       `
@@ -196,6 +218,8 @@ export const rejectHelper = async (req, res) => {
       });
     }
 
+    await pool.query("BEGIN");
+
     const result = await pool.query(
       `
       UPDATE helper_profiles
@@ -209,7 +233,18 @@ export const rejectHelper = async (req, res) => {
       WHERE user_id = $3
       RETURNING *
       `,
-      [req.user.id, rejection_reason || null, helperUserId]
+      [adminId, rejection_reason || null, helperUserId]
+    );
+
+    await pool.query(
+      `
+      UPDATE helper_skills
+      SET
+        verification_status = 'REJECTED',
+        available = false
+      WHERE helper_id = $1
+      `,
+      [helperUserId]
     );
 
     await createNotification({
@@ -222,12 +257,15 @@ export const rejectHelper = async (req, res) => {
       ref_id: Number(helperUserId),
     });
 
+    await pool.query("COMMIT");
+
     return res.status(200).json({
       ok: true,
       message: "Helper rejected successfully",
       helper_profile: result.rows[0],
     });
   } catch (error) {
+    await pool.query("ROLLBACK");
     console.error("rejectHelper error:", error);
     return res.status(500).json({
       ok: false,
@@ -239,6 +277,7 @@ export const rejectHelper = async (req, res) => {
 export const suspendHelper = async (req, res) => {
   try {
     const { helperUserId } = req.params;
+    const adminId = req.user.id;
 
     const helperCheck = await pool.query(
       `
@@ -257,6 +296,8 @@ export const suspendHelper = async (req, res) => {
       });
     }
 
+    await pool.query("BEGIN");
+
     const result = await pool.query(
       `
       UPDATE helper_profiles
@@ -269,8 +310,21 @@ export const suspendHelper = async (req, res) => {
       WHERE user_id = $2
       RETURNING *
       `,
-      [req.user.id, helperUserId]
+      [adminId, helperUserId]
     );
+
+    await pool.query(
+      `
+      UPDATE helper_skills
+      SET
+        verification_status = 'SUSPENDED',
+        available = false
+      WHERE helper_id = $1
+      `,
+      [helperUserId]
+    );
+
+    await pool.query("COMMIT");
 
     return res.status(200).json({
       ok: true,
@@ -278,6 +332,7 @@ export const suspendHelper = async (req, res) => {
       helper_profile: result.rows[0],
     });
   } catch (error) {
+    await pool.query("ROLLBACK");
     console.error("suspendHelper error:", error);
     return res.status(500).json({
       ok: false,
@@ -286,20 +341,29 @@ export const suspendHelper = async (req, res) => {
   }
 };
 
-
 export const releaseHelperPayment = async (req, res) => {
   try {
     const adminId = req.user.id;
     const bookingId = req.params.id;
 
-    const bookingQuery = `
-      SELECT id, helper_id, final_amount, commission_amount, helper_earning, payout_status, status
+    const bookingResult = await pool.query(
+      `
+      SELECT 
+        id, 
+        helper_id, 
+        final_amount, 
+        commission_amount, 
+        helper_earning, 
+        payout_status, 
+        status,
+        payment_status,
+        refund_status
       FROM bookings
       WHERE id = $1
       LIMIT 1
-    `;
-
-    const bookingResult = await pool.query(bookingQuery, [bookingId]);
+      `,
+      [bookingId]
+    );
 
     if (bookingResult.rows.length === 0) {
       return res.status(404).json({
@@ -314,6 +378,28 @@ export const releaseHelperPayment = async (req, res) => {
       return res.status(400).json({
         ok: false,
         message: "Only completed bookings can be released",
+      });
+    }
+
+    if (booking.payment_status !== "PAID") {
+      return res.status(400).json({
+        ok: false,
+        message: "Only paid bookings can be released",
+      });
+    }
+
+    const refundStatus = String(
+      booking.refund_status || "NO_REFUND"
+    ).toUpperCase();
+
+    if (
+      refundStatus === "REFUND_REQUESTED" ||
+      refundStatus === "REFUND_APPROVED" ||
+      refundStatus === "REFUNDED"
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message: "Cannot release payment for refunded or refund pending booking",
       });
     }
 
@@ -418,6 +504,10 @@ export const getCompletedBookingsForAdmin = async (req, res) => {
         b.completed_at,
         b.created_at,
         b.updated_at,
+        b.refund_status,
+        b.refund_reason,
+        b.refund_requested_at,
+        b.refund_decision_at,
 
         u1.full_name AS user_name,
         u1.email AS user_email,
@@ -439,18 +529,18 @@ export const getCompletedBookingsForAdmin = async (req, res) => {
         sc.name AS subcategory_name
 
       FROM bookings b
-      LEFT JOIN users u1
-        ON u1.id = b.user_id
-      LEFT JOIN users u2
-        ON u2.id = b.helper_id
-      LEFT JOIN helper_profiles hp
-        ON hp.user_id = b.helper_id
-      LEFT JOIN service_categories c
-        ON c.id = b.category_id
-      LEFT JOIN service_subcategories sc
-        ON sc.id = b.subcategory_id
+      LEFT JOIN users u1 ON u1.id = b.user_id
+      LEFT JOIN users u2 ON u2.id = b.helper_id
+      LEFT JOIN helper_profiles hp ON hp.user_id = b.helper_id
+      LEFT JOIN service_categories c ON c.id = b.category_id
+      LEFT JOIN service_subcategories sc ON sc.id = b.subcategory_id
 
       WHERE b.status = 'COMPLETED'
+      AND COALESCE(b.refund_status, 'NO_REFUND') NOT IN (
+        'REFUND_REQUESTED',
+        'REFUND_APPROVED',
+        'REFUNDED'
+      )
     `;
 
     const values = [];

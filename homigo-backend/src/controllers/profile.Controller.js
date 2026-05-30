@@ -346,7 +346,15 @@ export async function updateMyHelperProfile(req, res) {
   try {
     const userId = req.user.id;
     const userRole = req.user.role;
-    const { bio, hourly_rate, category_id, is_available, experience_years } = req.body;
+
+    const {
+      bio,
+      hourly_rate,
+      category_id,
+      is_available,
+      experience_years,
+      phone_number,
+    } = req.body;
 
     if (userRole !== "HELPER") {
       return res.status(403).json({
@@ -369,7 +377,6 @@ export async function updateMyHelperProfile(req, res) {
 
     const existingHelper = helperResult.rows[0];
 
-    // BLOCK availability ON if helper is not approved
     if (is_available === true) {
       if (
         existingHelper.verification_status !== "APPROVED" ||
@@ -377,7 +384,8 @@ export async function updateMyHelperProfile(req, res) {
       ) {
         return res.status(403).json({
           ok: false,
-          message: "You cannot become available until admin approves your helper account.",
+          message:
+            "You cannot become available until admin approves your helper account.",
         });
       }
     }
@@ -394,6 +402,31 @@ export async function updateMyHelperProfile(req, res) {
           message: "Invalid category_id.",
         });
       }
+    }
+
+    if (phone_number) {
+      const phoneCheck = await pool.query(
+        `SELECT id FROM users WHERE phone_number = $1 AND id <> $2`,
+        [phone_number, userId]
+      );
+
+      if (phoneCheck.rows.length > 0) {
+        return res.status(409).json({
+          ok: false,
+          message: "Phone number already in use.",
+        });
+      }
+
+      await pool.query(
+        `
+        UPDATE users
+        SET
+          phone_number = $1,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $2
+        `,
+        [phone_number, userId]
+      );
     }
 
     const updatedResult = await pool.query(
