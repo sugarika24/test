@@ -1,16 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   TextInput,
   ScrollView,
   RefreshControl,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { getAllCategories } from "../../services/categoryService";
 import { getPopularSubcategories } from "../../services/subcategoryService";
 import { Category, Subcategory } from "../../types/category";
@@ -26,29 +25,30 @@ export default function UserHomeScreen() {
     Subcategory[]
   >([]);
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
 
   useEffect(() => {
-    console.log("Home screen mounted");
-
-    setLoading(false);
-
     fetchHomeData();
+    fetchUnreadCount();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchUnreadCount();
+    }, []),
+  );
 
   useEffect(() => {
     let cleanupSocket: any = null;
 
     const attachSocketListener = () => {
       const socket = getSocket();
-
       if (!socket) return;
 
       const handleNotification = async () => {
-        console.log("Home badge refresh triggered");
+        console.log("Home notification badge refresh triggered");
         await fetchUnreadCount();
       };
 
@@ -76,7 +76,7 @@ export default function UserHomeScreen() {
       const count = await getUnreadNotificationCount();
       setUnreadNotificationCount(count);
     } catch (error) {
-      console.log("Failed to fetch unread notifications:", error);
+      console.log("Failed to fetch unread notification count:", error);
     }
   }
 
@@ -103,7 +103,7 @@ export default function UserHomeScreen() {
         setPopularSubcategories([]);
       }
     } catch (error: any) {
-      console.log("Home load error:", error);
+      console.log("Home load error:", error?.message || error);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -118,10 +118,19 @@ export default function UserHomeScreen() {
 
   function handleSearch() {
     if (!search.trim()) return;
+
     router.push({
       pathname: "/(tabs)/subcategory/[id]",
       params: { id: "search", q: search.trim() },
     });
+  }
+
+  if (loading) {
+    return (
+      <View className="flex-1 items-center justify-center bg-gray-50">
+        <ActivityIndicator size="large" color="#FE8B4C" />
+      </View>
+    );
   }
 
   return (
@@ -148,7 +157,7 @@ export default function UserHomeScreen() {
             </View>
 
             <View className="flex-row items-center gap-3">
-              {/* <ChatHeaderButton /> */}
+              <ChatHeaderButton />
 
               <TouchableOpacity
                 className="bg-[#FEF3E8] p-3 rounded-full relative"
@@ -173,7 +182,6 @@ export default function UserHomeScreen() {
             </View>
           </View>
 
-          {/* Search Bar */}
           <View className="flex-row mb-8 gap-3">
             <View className="flex-1 flex-row items-center bg-white rounded-xl px-4 py-2 shadow-sm border border-gray-100">
               <Ionicons name="search-outline" size={20} color="#9ca3af" />
@@ -192,6 +200,7 @@ export default function UserHomeScreen() {
                 </TouchableOpacity>
               )}
             </View>
+
             <TouchableOpacity
               className="bg-[#FE8B4C] rounded-xl px-5 items-center justify-center shadow-sm"
               onPress={handleSearch}
@@ -200,17 +209,12 @@ export default function UserHomeScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Categories Section */}
           <View className="mb-6">
             <View className="flex-row justify-between items-center mb-4">
               <Text className="text-xl font-bold text-gray-800">
                 Categories
               </Text>
-              <TouchableOpacity
-                onPress={() =>
-                  router.push("/(tabs)/categories/${item.id}" as any)
-                }
-              >
+              <TouchableOpacity>
                 <Text className="text-[#FE8B4C] text-sm font-medium">
                   See All
                 </Text>
@@ -248,15 +252,18 @@ export default function UserHomeScreen() {
                                   : "🏠"}
                     </Text>
                   </View>
+
                   <Text className="text-base font-semibold text-gray-800 mb-1">
                     {item.name}
                   </Text>
+
                   <Text
                     className="text-xs text-gray-500 mb-2"
                     numberOfLines={1}
                   >
                     {item.description || `${item.name} services`}
                   </Text>
+
                   <Text className="text-xs text-[#FE8B4C] font-medium">
                     {item.helper_count || 0} helpers
                   </Text>
@@ -265,17 +272,12 @@ export default function UserHomeScreen() {
             />
           </View>
 
-          {/* Popular Services Section */}
           <View className="mb-6">
             <View className="flex-row justify-between items-center mb-4">
               <Text className="text-xl font-bold text-gray-800">
                 Popular Services
               </Text>
-              <TouchableOpacity
-                onPress={() =>
-                  router.push("/(tabs)/subcategories/${item.id}" as any)
-                }
-              >
+              <TouchableOpacity>
                 <Text className="text-[#FE8B4C] text-sm font-medium">
                   See All
                 </Text>
@@ -307,13 +309,16 @@ export default function UserHomeScreen() {
                                 : "⭐"}
                     </Text>
                   </View>
+
                   <View className="flex-1">
                     <Text className="text-base font-semibold text-gray-800">
                       {item.name}
                     </Text>
+
                     <Text className="text-xs text-gray-500 mt-1">
                       {item.category_name}
                     </Text>
+
                     <View className="flex-row items-center mt-2">
                       <Ionicons
                         name="people-outline"
@@ -323,6 +328,7 @@ export default function UserHomeScreen() {
                       <Text className="text-xs text-[#FE8B4C] ml-1">
                         {item.helper_count || 0} helpers
                       </Text>
+
                       {item.price_model && (
                         <>
                           <View className="w-1 h-1 bg-gray-300 rounded-full mx-2" />
@@ -335,13 +341,13 @@ export default function UserHomeScreen() {
                       )}
                     </View>
                   </View>
+
                   <Ionicons name="chevron-forward" size={20} color="#d1d5db" />
                 </View>
               </TouchableOpacity>
             ))}
           </View>
 
-          {/* Quick Action Buttons */}
           <View className="flex-row gap-3 mt-2">
             <TouchableOpacity
               className="flex-1 bg-[#FEF3E8] rounded-xl py-4 items-center"
@@ -352,6 +358,7 @@ export default function UserHomeScreen() {
                 My Bookings
               </Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               className="flex-1 bg-[#FEF3E8] rounded-xl py-4 items-center"
               onPress={() => router.push("/(tabs)/profile")}

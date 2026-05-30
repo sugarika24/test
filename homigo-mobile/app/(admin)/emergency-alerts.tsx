@@ -55,55 +55,55 @@ export default function AdminEmergencyAlertsScreen() {
     fetchAlerts();
   }, [token]);
 
-  // useEffect(() => {
-  //   let cleanupSocket: any = null;
+  useEffect(() => {
+    let cleanupSocket: any = null;
 
-  //   const attachSocketListener = () => {
-  //     const socket = getSocket();
+    const attachSocketListener = () => {
+      const socket = getSocket();
 
-  //     if (!socket) return;
+      if (!socket) return;
 
-  //     const handleSOSAlert = async (data: any) => {
-  //       console.log("Admin SOS real-time alert:", data);
+      const handleSOSAlert = async (data: any) => {
+        console.log("Admin SOS real-time alert:", data);
 
-  //       Alert.alert(
-  //         "🚨 Emergency Alert",
-  //         `Emergency reported for booking ${
-  //           data?.bookingNumber || data?.bookingId || ""
-  //         }.`,
-  //         [
-  //           {
-  //             text: "View",
-  //             onPress: () => fetchAlerts(),
-  //           },
-  //           {
-  //             text: "OK",
-  //             onPress: () => fetchAlerts(),
-  //           },
-  //         ],
-  //       );
+        Alert.alert(
+          "🚨 Emergency Alert",
+          `Emergency reported for booking ${
+            data?.bookingNumber || data?.bookingId || ""
+          }.`,
+          [
+            {
+              text: "View",
+              onPress: () => fetchAlerts(),
+            },
+            {
+              text: "OK",
+              onPress: () => fetchAlerts(),
+            },
+          ],
+        );
 
-  //       fetchAlerts();
-  //     };
+        fetchAlerts();
+      };
 
-  //     socket.on("sos_alert", handleSOSAlert);
+      socket.on("sos_alert", handleSOSAlert);
 
-  //     cleanupSocket = () => {
-  //       socket.off("sos_alert", handleSOSAlert);
-  //     };
-  //   };
+      cleanupSocket = () => {
+        socket.off("sos_alert", handleSOSAlert);
+      };
+    };
 
-  //   attachSocketListener();
+    attachSocketListener();
 
-  //   const timer = setTimeout(() => {
-  //     attachSocketListener();
-  //   }, 1000);
+    const timer = setTimeout(() => {
+      attachSocketListener();
+    }, 1000);
 
-  //   return () => {
-  //     clearTimeout(timer);
-  //     if (cleanupSocket) cleanupSocket();
-  //   };
-  // }, []);
+    return () => {
+      clearTimeout(timer);
+      if (cleanupSocket) cleanupSocket();
+    };
+  }, []);
 
   async function fetchAlerts() {
     if (!token) return;

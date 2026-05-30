@@ -65,6 +65,17 @@ function getNotificationIcon(type: string) {
       return "star-outline";
     case "CHAT_MESSAGE":
       return "chatbubble-outline";
+    case "EMERGENCY_ALERT":
+      return "warning-outline";
+
+    case "EMERGENCY_STATUS_UPDATED":
+      return "shield-checkmark-outline";
+
+    case "REFUND_REQUESTED":
+      return "receipt-outline";
+
+    case "REFUND_STATUS_UPDATED":
+      return "cash-outline";
     default:
       return "notifications-outline";
   }
