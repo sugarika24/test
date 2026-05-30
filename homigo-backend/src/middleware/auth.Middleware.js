@@ -23,3 +23,28 @@ export function requireAuth(req, res, next) {
     });
   }
 }
+
+export function requireAdmin(req, res, next) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        ok: false,
+        message: "Unauthorized.",
+      });
+    }
+
+    if (req.user.role !== "ADMIN") {
+      return res.status(403).json({
+        ok: false,
+        message: "Admin access required.",
+      });
+    }
+
+    next();
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: "Authorization error.",
+    });
+  }
+}

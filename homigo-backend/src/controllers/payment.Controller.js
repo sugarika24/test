@@ -1,19 +1,58 @@
+import crypto from "crypto";
 import { pool } from "../db/db.js";
-import { generateEsewaSignature } from "../utils/esewa.js";
+import createNotification from "../utils/createNotification.js";
 
-const ESEWA_PRODUCT_CODE = process.env.ESEWA_PRODUCT_CODE;
-const ESEWA_SECRET_KEY = process.env.ESEWA_SECRET_KEY;
-const ESEWA_FORM_URL = process.env.ESEWA_FORM_URL;
-const ESEWA_STATUS_URL = process.env.ESEWA_STATUS_URL;
-const ESEWA_SUCCESS_URL = process.env.ESEWA_SUCCESS_URL;
-const ESEWA_FAILURE_URL = process.env.ESEWA_FAILURE_URL;
+const ESEWA_PRODUCT_CODE = process.env.ESEWA_PRODUCT_CODE || "EPAYTEST";
+const ESEWA_SECRET_KEY = process.env.ESEWA_SECRET_KEY || "8gBm/:&EnhH.1/q";
+const ESEWA_PAYMENT_URL =
+  process.env.ESEWA_FORM_URL ||
+  "https://rc-epay.esewa.com.np/api/epay/main/v2/form";
 
-function makeTxnId(bookingId) {
-  return `HOMIGO-${bookingId}-${Date.now()}`;
+function generateEsewaSignature(totalAmount, transactionUuid, productCode) {
+  const message = `total_amount=${totalAmount},transaction_uuid=${transactionUuid},product_code=${productCode}`;
+
+  return crypto
+    .createHmac("sha256", ESEWA_SECRET_KEY)
+    .update(message)
+    .digest("base64");
 }
 
-// 1. Initiate payment
-export async function initiateEsewaPayment(req, res) {
+function successPage(totalAmount, bookingId) {
+  return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Payment Successful</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      </head>
+      <body style="font-family: Arial; text-align: center; padding: 40px;">
+        <h2 style="color: green;">Payment Successful</h2>
+        <p>Your payment of NPR ${totalAmount || ""} has been completed.</p>
+        <p>Booking ID: ${bookingId}</p>
+        <p>You can now go back to the Homigo app and refresh bookings.</p>
+      </body>
+    </html>
+  `;
+}
+
+function failurePage(message = "Your payment was not completed.") {
+  return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Payment Failed</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      </head>
+      <body style="font-family: Arial; text-align: center; padding: 40px;">
+        <h2 style="color: red;">Payment Failed</h2>
+        <p>${message}</p>
+        <p>Please go back to Homigo and try again.</p>
+      </body>
+    </html>
+  `;
+}
+
+export const initiateEsewaPayment = async (req, res) => {
   try {
     const userId = req.user.id;
     const { bookingId } = req.body;
@@ -21,23 +60,23 @@ export async function initiateEsewaPayment(req, res) {
     if (!bookingId) {
       return res.status(400).json({
         ok: false,
-        message: "bookingId is required",
+        message: "Booking ID is required.",
       });
     }
 
     const bookingResult = await pool.query(
       `
-      SELECT id, user_id, status, payment_status, estimated_amount
+      SELECT id, user_id, status, payment_status
       FROM bookings
       WHERE id = $1
       `,
       [bookingId]
     );
-    
+
     if (bookingResult.rows.length === 0) {
       return res.status(404).json({
         ok: false,
-        message: "Booking not found",
+        message: "Booking not found.",
       });
     }
 
@@ -46,100 +85,54 @@ export async function initiateEsewaPayment(req, res) {
     if (Number(booking.user_id) !== Number(userId)) {
       return res.status(403).json({
         ok: false,
-        message: "You can only pay for your own booking",
+        message: "You are not allowed to pay for this booking.",
       });
     }
 
-    if (booking.payment_status === "PAID") {
-      return res.status(400).json({
-        ok: false,
-        message: "Booking is already paid",
-      });
-    }
-
-    if (booking.status !== "ACCEPTED") {
+   if (!["ACCEPTED", "ON_THE_WAY", "IN_PROGRESS"].includes(booking.status)) {
   return res.status(400).json({
     ok: false,
-    message: "You can only pay after helper accepts the booking",
+    message: "Payment is available only after helper accepts the booking.",
   });
 }
 
-    if (!booking.estimated_amount || Number(booking.estimated_amount) <= 0) {
+    if (booking.payment_status === "PAID") {
       return res.status(400).json({
         ok: false,
-        message: "Invalid booking amount",
+        message: "This booking is already paid.",
       });
     }
 
-    const totalAmount = Number(booking.estimated_amount).toFixed(2);
-    const transactionUuid = makeTxnId(booking.id);
-
-    const signature = generateEsewaSignature({
-      total_amount: totalAmount,
-      transaction_uuid: transactionUuid,
-      product_code: ESEWA_PRODUCT_CODE,
-      secret: ESEWA_SECRET_KEY,
-    });
-
-    await pool.query(
-      `
-      UPDATE bookings
-      SET payment_provider = 'ESEWA',
-          merchant_txn_id = $1,
-          payment_status = 'INITIATED',
-          payment_amount = $2,
-          payment_initiated_at = NOW()
-      WHERE id = $3
-      `,
-      [transactionUuid, totalAmount, booking.id]
-    );
+    const checkoutUrl = `${req.protocol}://${req.get(
+      "host"
+    )}/api/payments/esewa/checkout/${bookingId}`;
 
     return res.json({
       ok: true,
-      message: "eSewa payment initiated successfully",
-      data: {
-        form_url: ESEWA_FORM_URL,
-        fields: {
-          amount: totalAmount,
-          tax_amount: "0",
-          total_amount: totalAmount,
-          transaction_uuid: transactionUuid,
-          product_code: ESEWA_PRODUCT_CODE,
-          product_service_charge: "0",
-          product_delivery_charge: "0",
-          success_url: ESEWA_SUCCESS_URL,
-          failure_url: ESEWA_FAILURE_URL,
-          signed_field_names: "total_amount,transaction_uuid,product_code",
-          signature,
-        },
-      },
+      message: "eSewa checkout created.",
+      checkout_url: checkoutUrl,
     });
   } catch (error) {
-    console.error("initiateEsewaPayment error:", error);
+    console.error("Initiate eSewa payment error:", error);
     return res.status(500).json({
       ok: false,
-      message: "Server error while initiating eSewa payment",
-      error: error.message,
+      message: "Server error while initiating eSewa payment.",
     });
   }
-}
+};
 
-// 2. Verify payment
-export async function verifyEsewaPayment(req, res) {
+export const esewaCheckoutPage = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const { bookingId } = req.body;
-
-    if (!bookingId) {
-      return res.status(400).json({
-        ok: false,
-        message: "bookingId is required",
-      });
-    }
+    const { bookingId } = req.params;
 
     const bookingResult = await pool.query(
       `
-      SELECT id, user_id, merchant_txn_id, payment_amount, payment_status
+      SELECT 
+        id,
+        status,
+        payment_status,
+        estimated_amount,
+        final_amount
       FROM bookings
       WHERE id = $1
       `,
@@ -147,92 +140,171 @@ export async function verifyEsewaPayment(req, res) {
     );
 
     if (bookingResult.rows.length === 0) {
-      return res.status(404).json({
-        ok: false,
-        message: "Booking not found",
-      });
+      return res.send("Booking not found.");
     }
 
     const booking = bookingResult.rows[0];
 
-    if (Number(booking.user_id) !== Number(userId)) {
-      return res.status(403).json({
-        ok: false,
-        message: "Unauthorized",
-      });
-    }
-
-    if (!booking.merchant_txn_id || !booking.payment_amount) {
-      return res.status(400).json({
-        ok: false,
-        message: "No initiated payment found for this booking",
-      });
-    }
+    if (!["ACCEPTED", "ON_THE_WAY", "IN_PROGRESS"].includes(booking.status)) {
+  return res.send("Payment allowed only after helper accepts booking.");
+}
 
     if (booking.payment_status === "PAID") {
-      return res.json({
-        ok: true,
-        message: "Payment already verified",
-      });
+      return res.send("This booking is already paid.");
     }
+
+    const amount = Number(booking.final_amount || booking.estimated_amount);
+
+    if (!amount || amount <= 0) {
+      return res.send("Invalid payment amount.");
+    }
+
+    const transactionUuid = `HOMIGO-${booking.id}-${Date.now()}`;
+    const totalAmount = amount.toFixed(1);
+
+    const signature = generateEsewaSignature(
+      totalAmount,
+      transactionUuid,
+      ESEWA_PRODUCT_CODE
+    );
 
     await pool.query(
       `
       UPDATE bookings
-      SET payment_status = 'PAID',
-          payment_reference = merchant_txn_id,
-          payment_completed_at = NOW(),
-          payment_verified_at = NOW()
+      SET 
+        payment_status = 'INITIATED',
+        payment_method = 'ONLINE',
+        updated_at = NOW()
       WHERE id = $1
       `,
       [booking.id]
     );
 
-    return res.json({
-      ok: true,
-      message: "Payment verified successfully",
-    });
-  } catch (error) {
-    console.error("verifyEsewaPayment error:", error);
-    return res.status(500).json({
-      ok: false,
-      message: "Server error while verifying eSewa payment",
-      error: error.message,
-    });
-  }
-}
+    const backendBaseUrl =
+      process.env.BACKEND_URL || "http://192.168.16.194:5000";
 
-// 3. Success redirect
-export async function esewaSuccess(req, res) {
+    const successUrl = `${backendBaseUrl}/api/payments/esewa/success`;
+    const failureUrl = `${backendBaseUrl}/api/payments/esewa/failure`;
+
+    console.log("ESEWA SUCCESS URL:", successUrl);
+    console.log("ESEWA FAILURE URL:", failureUrl);
+    console.log("TRANSACTION UUID:", transactionUuid);
+
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Redirecting to eSewa</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        </head>
+
+        <body onload="document.forms[0].submit()">
+          <h3 style="font-family: Arial; text-align: center; margin-top: 80px;">
+            Redirecting to eSewa...
+          </h3>
+
+          <form method="POST" action="${ESEWA_PAYMENT_URL}">
+            <input type="hidden" name="amount" value="${totalAmount}" />
+            <input type="hidden" name="tax_amount" value="0" />
+            <input type="hidden" name="total_amount" value="${totalAmount}" />
+            <input type="hidden" name="transaction_uuid" value="${transactionUuid}" />
+            <input type="hidden" name="product_code" value="${ESEWA_PRODUCT_CODE}" />
+            <input type="hidden" name="product_service_charge" value="0" />
+            <input type="hidden" name="product_delivery_charge" value="0" />
+            <input type="hidden" name="success_url" value="${successUrl}" />
+            <input type="hidden" name="failure_url" value="${failureUrl}" />
+            <input type="hidden" name="signed_field_names" value="total_amount,transaction_uuid,product_code" />
+            <input type="hidden" name="signature" value="${signature}" />
+          </form>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error("eSewa checkout page error:", error);
+    return res.send("Server error while opening eSewa checkout.");
+  }
+};
+
+export const esewaSuccess = async (req, res) => {
   try {
-    return res.status(200).send("eSewa payment success page reached. Return to Homigo app.");
-  } catch (error) {
-    console.error("esewaSuccess error:", error);
-    return res.status(500).send("Server error");
-  }
-}
+    console.log("SUCCESS ROUTE HIT:", req.query);
 
-// 4. Failure redirect
-export async function esewaFailure(req, res) {
-  try {
-    return res.status(200).send("eSewa payment failed or cancelled.");
-  } catch (error) {
-    console.error("esewaFailure error:", error);
-    return res.status(500).send("Server error");
-  }
-}
+    const { data } = req.query;
 
-// 5. Get payment status by booking
-export async function getPaymentStatus(req, res) {
+    if (!data) {
+      return res.status(400).send(failurePage("Missing payment data."));
+    }
+
+    const decodedString = Buffer.from(data, "base64").toString("utf-8");
+    const decodedData = JSON.parse(decodedString);
+
+    console.log("eSewa success response:", decodedData);
+
+    const { transaction_code, status, total_amount, transaction_uuid } =
+      decodedData;
+
+    const bookingId = transaction_uuid?.split("-")[1];
+
+    console.log("EXTRACTED BOOKING ID:", bookingId);
+
+    if (!bookingId) {
+      return res.status(400).send(failurePage("Booking ID not found."));
+    }
+
+    if (status !== "COMPLETE") {
+      return res.status(400).send(failurePage("Payment was not completed."));
+    }
+
+    const updateResult = await pool.query(
+      `
+      UPDATE bookings
+      SET 
+        payment_status = 'PAID',
+        payment_method = 'ONLINE',
+        transaction_id = $1,
+        paid_at = NOW(),
+        updated_at = NOW()
+      WHERE id = $2
+      RETURNING id, payment_status, transaction_id, paid_at
+      `,
+      [transaction_code || transaction_uuid, bookingId]
+    );
+
+    console.log("PAYMENT UPDATE RESULT:", updateResult.rows);
+
+    if (updateResult.rows.length === 0) {
+      return res.status(404).send(failurePage("Booking not found in database."));
+    }
+
+    return res.send(successPage(total_amount, bookingId));
+  } catch (error) {
+    console.error("eSewa success error:", error);
+    return res.status(500).send(failurePage("Server error while updating payment."));
+  }
+};
+
+export const esewaFailure = async (req, res) => {
+  console.log("FAILURE ROUTE HIT:", req.query);
+  return res.send(failurePage("Your eSewa payment was cancelled or failed."));
+};
+
+export const getPaymentStatus = async (req, res) => {
   try {
     const userId = req.user.id;
     const { bookingId } = req.params;
 
     const result = await pool.query(
       `
-      SELECT id, user_id, payment_provider, payment_status, payment_amount,
-             merchant_txn_id, payment_reference, payment_initiated_at,
-             payment_completed_at, payment_verified_at
+      SELECT 
+        id,
+        user_id,
+        status,
+        payment_status,
+        payment_method,
+        transaction_id,
+        paid_at,
+        estimated_amount,
+        final_amount
       FROM bookings
       WHERE id = $1
       `,
@@ -242,7 +314,7 @@ export async function getPaymentStatus(req, res) {
     if (result.rows.length === 0) {
       return res.status(404).json({
         ok: false,
-        message: "Booking not found",
+        message: "Booking not found.",
       });
     }
 
@@ -251,20 +323,194 @@ export async function getPaymentStatus(req, res) {
     if (Number(booking.user_id) !== Number(userId)) {
       return res.status(403).json({
         ok: false,
-        message: "Unauthorized",
+        message: "You cannot view this payment status.",
       });
     }
 
     return res.json({
       ok: true,
-      data: booking,
+      booking,
     });
   } catch (error) {
-    console.error("getPaymentStatus error:", error);
+    console.error("Get payment status error:", error);
     return res.status(500).json({
       ok: false,
-      message: "Server error",
-      error: error.message,
+      message: "Server error while getting payment status.",
     });
   }
-}
+};
+
+export const requestRefund = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { bookingId } = req.params;
+    const { refund_reason } = req.body || {};
+
+    if (!refund_reason) {
+      return res.status(400).json({
+        ok: false,
+        message: "Refund reason is required.",
+      });
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE bookings
+      SET refund_status = 'REFUND_REQUESTED',
+          refund_reason = $1,
+          refund_requested_at = NOW(),
+          updated_at = NOW()
+      WHERE id = $2
+        AND user_id = $3
+        AND payment_status = 'PAID'
+        AND refund_status IN ('NO_REFUND', 'REFUND_REJECTED')
+      RETURNING *
+      `,
+      [refund_reason, bookingId, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        message: "Refund cannot be requested for this booking.",
+      });
+    }
+
+    const booking = result.rows[0];
+
+    const admins = await pool.query(
+      `SELECT id FROM users WHERE role = 'ADMIN' AND is_active = true`
+    );
+
+    const io = req.app.get("io");
+
+    for (const admin of admins.rows) {
+      await createNotification({
+        user_id: admin.id,
+        title: "Refund Requested",
+        message: `Refund requested for booking ${booking.booking_number || booking.id}.`,
+        type: "REFUND_REQUESTED",
+        ref_table: "bookings",
+        ref_id: booking.id,
+      });
+
+      io?.to(`user_${admin.id}`).emit("notification", {
+        type: "REFUND_REQUESTED",
+        title: "Refund Requested",
+        message: `Refund requested for booking ${booking.booking_number || booking.id}.`,
+        bookingId: booking.id,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "Refund request submitted successfully.",
+      booking,
+    });
+  } catch (error) {
+    console.error("requestRefund error:", error);
+    return res.status(500).json({
+      ok: false,
+      message: "Server error while requesting refund.",
+    });
+  }
+};
+
+export const getAdminRefundRequests = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT 
+        b.*,
+        u.full_name AS user_name,
+        u.phone_number AS user_phone,
+        h.full_name AS helper_name
+      FROM bookings b
+      JOIN users u ON u.id = b.user_id
+      JOIN users h ON h.id = b.helper_id
+      WHERE b.refund_status = 'REFUND_REQUESTED'
+      ORDER BY b.refund_requested_at DESC
+      `
+    );
+
+    return res.json({
+      ok: true,
+      refunds: result.rows,
+    });
+  } catch (error) {
+    console.error("getAdminRefundRequests error:", error);
+    return res.status(500).json({
+      ok: false,
+      message: "Server error while fetching refund requests.",
+    });
+  }
+};
+
+export const updateRefundStatus = async (req, res) => {
+  try {
+    const adminId = req.user.id;
+    const { bookingId } = req.params;
+    const { refund_status, refund_admin_note } = req.body || {};
+
+    if (!["REFUND_APPROVED", "REFUND_REJECTED", "REFUNDED"].includes(refund_status)) {
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid refund status.",
+      });
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE bookings
+      SET refund_status = $1,
+          refund_admin_note = $2,
+          refund_decision_by = $3,
+          refund_decision_at = NOW(),
+          updated_at = NOW()
+      WHERE id = $4
+        AND refund_status = 'REFUND_REQUESTED'
+      RETURNING *
+      `,
+      [refund_status, refund_admin_note || null, adminId, bookingId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        message: "Refund request not found or already processed.",
+      });
+    }
+
+    const booking = result.rows[0];
+
+    await createNotification({
+      user_id: booking.user_id,
+      title: "Refund Update",
+      message: `Your refund request has been marked as ${refund_status}.`,
+      type: "REFUND_STATUS_UPDATED",
+      ref_table: "bookings",
+      ref_id: booking.id,
+    });
+
+    const io = req.app.get("io");
+
+    io?.to(`user_${booking.user_id}`).emit("notification", {
+      type: "REFUND_STATUS_UPDATED",
+      title: "Refund Update",
+      message: `Your refund request has been marked as ${refund_status}.`,
+      bookingId: booking.id,
+    });
+
+    return res.json({
+      ok: true,
+      message: "Refund status updated successfully.",
+      booking,
+    });
+  } catch (error) {
+    console.error("updateRefundStatus error:", error);
+    return res.status(500).json({
+      ok: false,
+      message: "Server error while updating refund status.",
+    });
+  }
+};

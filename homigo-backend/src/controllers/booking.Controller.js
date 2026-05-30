@@ -2,6 +2,13 @@ import { pool } from "../db/db.js";
 import { generateBookingNumber } from "../utils/generateBookingNumber.js";
 import createNotification from "../utils/createNotification.js";
 
+function emitNotification(req, userId, payload) {
+  const io = req.app.get("io");
+  if (io && userId) {
+    io.to(`user_${userId}`).emit("notification", payload);
+  }
+}
+
 export const createBooking = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -44,7 +51,8 @@ export const createBooking = async (req, res) => {
       });
     }
 
-    const helperCheckQuery = `
+    const helperResult = await pool.query(
+      `
       SELECT 
         u.id AS helper_id,
         u.full_name,
@@ -70,12 +78,9 @@ export const createBooking = async (req, res) => {
         AND hs.available = true
         AND hs.verification_status = 'APPROVED'
       LIMIT 1
-    `;
-
-    const helperResult = await pool.query(helperCheckQuery, [
-      helper_id,
-      subcategory_id,
-    ]);
+      `,
+      [helper_id, subcategory_id]
+    );
 
     if (helperResult.rows.length === 0) {
       return res.status(404).json({
@@ -85,7 +90,6 @@ export const createBooking = async (req, res) => {
     }
 
     const helper = helperResult.rows[0];
-
     const bookingNumber = await generateBookingNumber(pool);
 
     let estimatedAmount = 0;
@@ -100,7 +104,8 @@ export const createBooking = async (req, res) => {
       estimatedAmount = Number(helper.hourly_rate || 0) * hours;
     }
 
-    const insertQuery = `
+    const result = await pool.query(
+      `
       INSERT INTO bookings (
         booking_number,
         user_id,
@@ -127,31 +132,30 @@ export const createBooking = async (req, res) => {
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'PENDING'
       )
       RETURNING *
-    `;
+      `,
+      [
+        bookingNumber,
+        userId,
+        helper_id,
+        helper.category_id,
+        subcategory_id,
+        helper.helper_skill_id,
+        helper.subcategory_name,
+        booking_date,
+        start_time,
+        end_time || null,
+        duration_minutes || null,
+        service_address,
+        lat,
+        lng,
+        special_instructions || null,
+        pricingType,
+        helper.hourly_rate || 0,
+        helper.fixed_rate || 0,
+        estimatedAmount,
+      ]
+    );
 
-    const values = [
-      bookingNumber,
-      userId,
-      helper_id,
-      helper.category_id,
-      subcategory_id,
-      helper.helper_skill_id,
-      helper.subcategory_name,
-      booking_date,
-      start_time,
-      end_time || null,
-      duration_minutes || null,
-      service_address,
-      lat,
-      lng,
-      special_instructions || null,
-      pricingType,
-      helper.hourly_rate || 0,
-      helper.fixed_rate || 0,
-      estimatedAmount,
-    ];
-
-    const result = await pool.query(insertQuery, values);
     const newBooking = result.rows[0];
 
     await createNotification({
@@ -163,6 +167,13 @@ export const createBooking = async (req, res) => {
       ref_id: newBooking.id,
     });
 
+    emitNotification(req, helper_id, {
+      type: "NEW_BOOKING_REQUEST",
+      title: "New Booking Request",
+      message: `You received a new booking request for ${newBooking.service_name}.`,
+      bookingId: newBooking.id,
+    });
+
     await createNotification({
       user_id: userId,
       title: "Booking Confirmed",
@@ -172,6 +183,13 @@ export const createBooking = async (req, res) => {
       ref_id: newBooking.id,
     });
 
+    emitNotification(req, userId, {
+      type: "BOOKING_CREATED",
+      title: "Booking Confirmed",
+      message: `Your booking for ${newBooking.service_name} has been created successfully.`,
+      bookingId: newBooking.id,
+    });
+
     return res.status(201).json({
       ok: true,
       message: "Booking created successfully",
@@ -179,10 +197,6 @@ export const createBooking = async (req, res) => {
     });
   } catch (error) {
     console.error("createBooking error:", error);
-    console.error("message:", error.message);
-    console.error("detail:", error.detail);
-    console.error("code:", error.code);
-
     return res.status(500).json({
       ok: false,
       message: "Server error while creating booking",
@@ -196,7 +210,8 @@ export const getUserBookings = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const query = `
+    const result = await pool.query(
+      `
       SELECT 
         b.*,
         u.full_name AS helper_name,
@@ -205,9 +220,9 @@ export const getUserBookings = async (req, res) => {
       JOIN users u ON u.id = b.helper_id
       WHERE b.user_id = $1
       ORDER BY b.created_at DESC
-    `;
-
-    const result = await pool.query(query, [userId]);
+      `,
+      [userId]
+    );
 
     return res.json({
       ok: true,
@@ -226,7 +241,8 @@ export const getHelperBookings = async (req, res) => {
   try {
     const helperId = req.user.id;
 
-    const query = `
+    const result = await pool.query(
+      `
       SELECT 
         b.*,
         u.full_name AS user_name,
@@ -236,9 +252,9 @@ export const getHelperBookings = async (req, res) => {
       JOIN users u ON u.id = b.user_id
       WHERE b.helper_id = $1
       ORDER BY b.created_at DESC
-    `;
-
-    const result = await pool.query(query, [helperId]);
+      `,
+      [helperId]
+    );
 
     return res.json({
       ok: true,
@@ -258,7 +274,8 @@ export const getBookingById = async (req, res) => {
     const userId = req.user.id;
     const bookingId = req.params.id;
 
-    const query = `
+    const result = await pool.query(
+      `
       SELECT 
         b.*,
         u1.full_name AS user_name,
@@ -272,9 +289,9 @@ export const getBookingById = async (req, res) => {
       WHERE b.id = $1
         AND (b.user_id = $2 OR b.helper_id = $2)
       LIMIT 1
-    `;
-
-    const result = await pool.query(query, [bookingId, userId]);
+      `,
+      [bookingId, userId]
+    );
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -301,17 +318,19 @@ export const acceptBooking = async (req, res) => {
     const helperId = req.user.id;
     const bookingId = req.params.id;
 
-    const query = `
+    const result = await pool.query(
+      `
       UPDATE bookings
       SET status = 'ACCEPTED',
-          accepted_at = CURRENT_TIMESTAMP
+          accepted_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
         AND helper_id = $2
-        AND status = 'PENDING'
+        AND status IN ('PENDING', 'RESCHEDULED')
       RETURNING *
-    `;
-
-    const result = await pool.query(query, [bookingId, helperId]);
+      `,
+      [bookingId, helperId]
+    );
 
     if (result.rows.length === 0) {
       return res.status(400).json({
@@ -329,6 +348,13 @@ export const acceptBooking = async (req, res) => {
       type: "BOOKING_ACCEPTED",
       ref_table: "bookings",
       ref_id: booking.id,
+    });
+
+    emitNotification(req, booking.user_id, {
+      type: "BOOKING_ACCEPTED",
+      title: "Helper Accepted",
+      message: `Your booking for ${booking.service_name} has been accepted by the helper.`,
+      bookingId: booking.id,
     });
 
     return res.json({
@@ -351,23 +377,21 @@ export const rejectBooking = async (req, res) => {
     const bookingId = req.params.id;
     const { rejection_reason } = req.body;
 
-    const query = `
+    const result = await pool.query(
+      `
       UPDATE bookings
       SET status = 'REJECTED',
           rejected_by = $2,
           rejection_reason = $3,
-          rejected_at = CURRENT_TIMESTAMP
+          rejected_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
         AND helper_id = $2
-        AND status = 'PENDING'
+        AND status IN ('PENDING', 'RESCHEDULED')
       RETURNING *
-    `;
-
-    const result = await pool.query(query, [
-      bookingId,
-      helperId,
-      rejection_reason || null,
-    ]);
+      `,
+      [bookingId, helperId, rejection_reason || null]
+    );
 
     if (result.rows.length === 0) {
       return res.status(400).json({
@@ -385,6 +409,13 @@ export const rejectBooking = async (req, res) => {
       type: "BOOKING_REJECTED",
       ref_table: "bookings",
       ref_id: booking.id,
+    });
+
+    emitNotification(req, booking.user_id, {
+      type: "BOOKING_REJECTED",
+      title: "Booking Rejected",
+      message: `Your booking for ${booking.service_name} was rejected by the helper.`,
+      bookingId: booking.id,
     });
 
     return res.json({
@@ -406,17 +437,19 @@ export const markOnTheWay = async (req, res) => {
     const helperId = req.user.id;
     const bookingId = req.params.id;
 
-    const query = `
+    const result = await pool.query(
+      `
       UPDATE bookings
       SET status = 'ON_THE_WAY',
-          on_the_way_at = CURRENT_TIMESTAMP
+          on_the_way_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
         AND helper_id = $2
         AND status = 'ACCEPTED'
       RETURNING *
-    `;
-
-    const result = await pool.query(query, [bookingId, helperId]);
+      `,
+      [bookingId, helperId]
+    );
 
     if (result.rows.length === 0) {
       return res.status(400).json({
@@ -434,6 +467,13 @@ export const markOnTheWay = async (req, res) => {
       type: "BOOKING_ON_THE_WAY",
       ref_table: "bookings",
       ref_id: booking.id,
+    });
+
+    emitNotification(req, booking.user_id, {
+      type: "BOOKING_ON_THE_WAY",
+      title: "Helper is Coming",
+      message: `Your helper is on the way for ${booking.service_name}.`,
+      bookingId: booking.id,
     });
 
     return res.json({
@@ -455,17 +495,19 @@ export const startBooking = async (req, res) => {
     const helperId = req.user.id;
     const bookingId = req.params.id;
 
-    const query = `
+    const result = await pool.query(
+      `
       UPDATE bookings
       SET status = 'IN_PROGRESS',
-          started_at = CURRENT_TIMESTAMP
+          started_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
         AND helper_id = $2
         AND status IN ('ACCEPTED', 'ON_THE_WAY')
       RETURNING *
-    `;
-
-    const result = await pool.query(query, [bookingId, helperId]);
+      `,
+      [bookingId, helperId]
+    );
 
     if (result.rows.length === 0) {
       return res.status(400).json({
@@ -483,6 +525,13 @@ export const startBooking = async (req, res) => {
       type: "BOOKING_STARTED",
       ref_table: "bookings",
       ref_id: booking.id,
+    });
+
+    emitNotification(req, booking.user_id, {
+      type: "BOOKING_STARTED",
+      title: "Service Started",
+      message: `Your ${booking.service_name} service has started.`,
+      bookingId: booking.id,
     });
 
     return res.json({
@@ -505,14 +554,15 @@ export const completeBooking = async (req, res) => {
     const bookingId = req.params.id;
     const { final_amount } = req.body || {};
 
-    const bookingQuery = `
+    const bookingResult = await pool.query(
+      `
       SELECT id, helper_id, user_id, status, service_name, estimated_amount, commission_percent
       FROM bookings
       WHERE id = $1
       LIMIT 1
-    `;
-
-    const bookingResult = await pool.query(bookingQuery, [bookingId]);
+      `,
+      [bookingId]
+    );
 
     if (bookingResult.rows.length === 0) {
       return res.status(404).json({
@@ -542,27 +592,23 @@ export const completeBooking = async (req, res) => {
     const commissionAmount = (finalAmount * commissionPercent) / 100;
     const helperEarning = finalAmount - commissionAmount;
 
-    const query = `
+    const result = await pool.query(
+      `
       UPDATE bookings
       SET status = 'COMPLETED',
           completed_at = CURRENT_TIMESTAMP,
           final_amount = $3,
           commission_amount = $4,
           helper_earning = $5,
-          payout_status = 'PENDING'
+          payout_status = 'PENDING',
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
         AND helper_id = $2
         AND status = 'IN_PROGRESS'
       RETURNING *
-    `;
-
-    const result = await pool.query(query, [
-      bookingId,
-      helperId,
-      finalAmount,
-      commissionAmount,
-      helperEarning,
-    ]);
+      `,
+      [bookingId, helperId, finalAmount, commissionAmount, helperEarning]
+    );
 
     const completedBooking = result.rows[0];
 
@@ -573,6 +619,13 @@ export const completeBooking = async (req, res) => {
       type: "BOOKING_COMPLETED",
       ref_table: "bookings",
       ref_id: completedBooking.id,
+    });
+
+    emitNotification(req, completedBooking.user_id, {
+      type: "BOOKING_COMPLETED",
+      title: "Service Completed",
+      message: `Your ${completedBooking.service_name} has been completed. Please leave a review.`,
+      bookingId: completedBooking.id,
     });
 
     return res.json({
@@ -596,23 +649,21 @@ export const cancelBooking = async (req, res) => {
     const bookingId = req.params.id;
     const { cancellation_reason } = req.body;
 
-    const query = `
+    const result = await pool.query(
+      `
       UPDATE bookings
       SET status = 'CANCELLED',
           cancelled_by = $2,
           cancellation_reason = $3,
-          cancelled_at = CURRENT_TIMESTAMP
+          cancelled_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
         AND (user_id = $2 OR helper_id = $2)
-        AND status IN ('PENDING', 'ACCEPTED')
+        AND status IN ('PENDING', 'ACCEPTED', 'RESCHEDULED')
       RETURNING *
-    `;
-
-    const result = await pool.query(query, [
-      bookingId,
-      userId,
-      cancellation_reason || null,
-    ]);
+      `,
+      [bookingId, userId, cancellation_reason || null]
+    );
 
     if (result.rows.length === 0) {
       return res.status(400).json({
@@ -635,6 +686,13 @@ export const cancelBooking = async (req, res) => {
       type: "BOOKING_CANCELLED",
       ref_table: "bookings",
       ref_id: booking.id,
+    });
+
+    emitNotification(req, notifyUserId, {
+      type: "BOOKING_CANCELLED",
+      title: "Booking Cancelled",
+      message: `Your booking for ${booking.service_name} has been cancelled.`,
+      bookingId: booking.id,
     });
 
     return res.json({
@@ -664,27 +722,23 @@ export const rescheduleBooking = async (req, res) => {
       });
     }
 
-    const query = `
+    const result = await pool.query(
+      `
       UPDATE bookings
       SET status = 'RESCHEDULED',
           rescheduled_from_date = booking_date,
           rescheduled_from_time = start_time,
           booking_date = $3,
           start_time = $4,
-          end_time = $5
+          end_time = $5,
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
         AND user_id = $2
-        AND status IN ('PENDING', 'ACCEPTED')
+        AND status IN ('PENDING', 'ACCEPTED', 'RESCHEDULED')
       RETURNING *
-    `;
-
-    const result = await pool.query(query, [
-      bookingId,
-      userId,
-      booking_date,
-      start_time,
-      end_time || null,
-    ]);
+      `,
+      [bookingId, userId, booking_date, start_time, end_time || null]
+    );
 
     if (result.rows.length === 0) {
       return res.status(400).json({
@@ -702,6 +756,13 @@ export const rescheduleBooking = async (req, res) => {
       type: "BOOKING_RESCHEDULED",
       ref_table: "bookings",
       ref_id: booking.id,
+    });
+
+    emitNotification(req, booking.helper_id, {
+      type: "BOOKING_RESCHEDULED",
+      title: "Booking Rescheduled",
+      message: `A booking for ${booking.service_name} has been rescheduled.`,
+      bookingId: booking.id,
     });
 
     return res.json({
@@ -726,11 +787,6 @@ export const updateHelperLiveLocation = async (req, res) => {
 
     const lat = Number(latitude);
     const lng = Number(longitude);
-
-    console.log("updateHelperLiveLocation called");
-    console.log("helperId:", helperId);
-    console.log("bookingId:", bookingId);
-    console.log("body:", req.body);
 
     if (isNaN(lat) || isNaN(lng)) {
       return res.status(400).json({
@@ -782,7 +838,7 @@ export const updateHelperLiveLocation = async (req, res) => {
         latitude = EXCLUDED.latitude,
         longitude = EXCLUDED.longitude,
         updated_at = CURRENT_TIMESTAMP
-      RETURNING *;
+      RETURNING *
       `,
       [helperId, bookingId, lat, lng]
     );
@@ -904,10 +960,17 @@ export const payBooking = async (req, res) => {
       });
     }
 
-    if (booking.payment_status === "PAID") {
+    if (["PAID", "COMPLETED", "SUCCESS"].includes(booking.payment_status)) {
       return res.status(400).json({
         ok: false,
         message: "Booking is already paid",
+      });
+    }
+
+    if (!["ACCEPTED", "ON_THE_WAY", "IN_PROGRESS"].includes(booking.status)) {
+      return res.status(400).json({
+        ok: false,
+        message: "You can only pay after helper accepts the booking",
       });
     }
 
@@ -919,6 +982,10 @@ export const payBooking = async (req, res) => {
       paymentStatus = "PAID";
       transactionId = `TXN-${Date.now()}`;
       paidAt = new Date();
+    }
+
+    if (payment_method === "COD") {
+      paymentStatus = "PENDING";
     }
 
     const result = await pool.query(
@@ -947,6 +1014,16 @@ export const payBooking = async (req, res) => {
       type: "BOOKING_PAYMENT_UPDATED",
       ref_table: "bookings",
       ref_id: updatedBooking.id,
+    });
+
+    emitNotification(req, updatedBooking.helper_id, {
+      type: "BOOKING_PAYMENT_UPDATED",
+      title: "Booking Payment Updated",
+      message:
+        payment_method === "ONLINE"
+          ? `Payment has been completed for booking ${updatedBooking.booking_number}.`
+          : `Cash on Delivery was selected for booking ${updatedBooking.booking_number}.`,
+      bookingId: updatedBooking.id,
     });
 
     return res.json({
